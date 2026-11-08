@@ -4,7 +4,7 @@ import { diagnoseOrder, compareDeposit } from '../src/diagnose.js';
 import { csvCell, toCsv } from '../src/csv.js';
 import { simulatedCases } from '../src/simulated.js';
 import { validateNarrative } from '../src/ai.js';
-import { presentStoredNarrative } from '../src/narrative-claims.js';
+import { buildAllowlist, presentStoredNarrative } from '../src/narrative-claims.js';
 
 const now = Date.parse('2026-11-08T12:00:00.000Z');
 const future = '2026-11-08T18:00:00.000Z';
@@ -65,73 +65,85 @@ test('stale and failed refreshes are not described as fresh', () => {
   assert.ok(stale.findings.some((f) => f.id === 'stale_status'));
 });
 
-test('narrative schema rejects actions, foreign evidence, and a silent refresh failure', () => {
-  const ids = ['order:ord_x', 'quote:qt_1'];
-  const good = { summary: 'The status refresh failed. Deposited amount is unknown.', evidenceCited: ['quote:qt_1'], unknowns: ['depositedAmount was not reported'], suggestedReviewStep: 'Review the stored quote. Do not send a refund.' };
-  assert.equal(validateNarrative(good, { evidenceIds: ids, refreshFailed: true }).ok, true);
-  assert.equal(validateNarrative({ ...good, executeRefund: true }, { evidenceIds: ids, refreshFailed: true }).ok, false);
-  assert.equal(validateNarrative({ ...good, evidenceCited: ['quote:forged'] }, { evidenceIds: ids, refreshFailed: true }).ok, false);
-  assert.equal(validateNarrative({ ...good, summary: 'All settled just now.' }, { evidenceIds: ids, refreshFailed: true }).ok, false);
-  assert.equal(validateNarrative({ ...good, summary: '<script>alert(1)</script>' }, { evidenceIds: ids, refreshFailed: true }).ok, false);
-});
-
-test('a no-quote 1 USDC explanation cannot invent base-unit amounts, a failed refresh, or a deadline', () => {
+test('the model may only select allowlist ids, and Ferry renders the sentences', () => {
   const facts = {
+    orderId: 'ord_x',
     destination: { displayAmount: '1', symbol: 'USDC', chain: 'near', baseUnits: '1000000', decimals: 6 },
     quotes: [],
-    refresh: { failed: false, providerCalled: false, detail: 'No quote is stored, so the provider was not called. This is not a failed refresh.' },
+    refresh: { failed: false, providerCalled: false },
+    storedStatus: 'open',
   };
-  const ids = ['order:ord_x', 'event:1', 'event:4', 'event:5'];
-  const observed = {
-    summary: 'The order is for 1,000,000 USDC on NEAR. A refresh was attempted but failed to produce quotes; the status was not rechecked.',
-    evidenceCited: ids,
-    unknowns: ['refresh attempted but failed to produce quotes'],
-    suggestedReviewStep: 'Generate a quote. Funds may be lost after the quote deadline.',
-  };
-  const rejected = validateNarrative(observed, { evidenceIds: ids, refreshFailed: false, facts });
-  assert.equal(rejected.ok, false);
-  assert.match(rejected.errors.join(' '), /base units/);
-  assert.match(rejected.errors.join(' '), /failed refresh/);
-  assert.match(rejected.errors.join(' '), /quote deadline/);
-  const bare = validateNarrative({ ...observed, summary: '1000000 USDC on NEAR.', unknowns: ['none'], suggestedReviewStep: 'Wait for the buyer.' }, { evidenceIds: ids, refreshFailed: false, facts });
-  assert.equal(bare.ok, false);
-  const truthful = validateNarrative({
-    summary: 'The display amount is 1 USDC. No quote is stored. The provider was not called, so this is not a failed refresh.',
-    evidenceCited: ['order:ord_x'],
-    unknowns: ['No provider field is missing because no quote was stored.'],
-    suggestedReviewStep: 'Leave the order open. A quote has not been requested.',
-  }, { evidenceIds: ids, refreshFailed: false, facts });
-  assert.equal(truthful.ok, true, truthful.errors.join(' '));
-  assert.equal(truthful.value.claimsChecked, true);
-  assert.equal(validateNarrative({
-    summary: 'The order is 1 USDC, which is 1000000 base units.',
-    evidenceCited: ['order:ord_x'], unknowns: ['none'], suggestedReviewStep: 'No quote has been requested.',
-  }, { evidenceIds: ids, refreshFailed: false, facts }).ok, true);
+  const allow = buildAllowlist(facts);
+  const attacks = [
+    { summary: '100 USDC', evidenceCited: ['order:ord_x'], unknowns: ['none'], suggestedReviewStep: 'Generate a new quote.' },
+    { summary: '1 million USDC', claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight' },
+    { summary: '1M', claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight' },
+    { claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight', suggestedReviewStep: 'No deposit was sent, funds may be lost' },
+    { claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight', summary: 'The status check errored. You could lose your money if you wait.' },
+    { claimIds: allow.mandatoryClaimIds, stepId: 'step:generate-quote' },
+    { claimIds: ['claim:display-amount'], stepId: 'step:nothing-in-flight' },
+  ];
+  for (const attack of attacks) {
+    const rejected = validateNarrative(attack, { allowlist: allow });
+    assert.equal(rejected.ok, false, JSON.stringify(attack));
+    assert.equal(rejected.value, null);
+  }
+  const ok = validateNarrative({ claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight' }, { allowlist: allow });
+  assert.equal(ok.ok, true, ok.errors.join(' '));
+  assert.equal(ok.value.narrativeVersion, 2);
+  assert.equal(ok.value.composedBy, 'ferry');
+  assert.equal(ok.value.selectedBy, 'near-ai');
+  assert.match(ok.value.summary, /1 USDC/);
+  assert.match(ok.value.summary, /1000000 base units/);
+  assert.match(ok.value.summary, /was not called/);
+  assert.doesNotMatch(`${ok.value.summary} ${ok.value.suggestedReviewStep}`, /100 USDC|1 million|\b1M\b|funds may be lost|lose your money|status check errored|Generate a new quote/);
+  assert.equal(ok.value.summary, ok.value.statements.map((s) => s.text).join(' '));
 });
 
-test('refresh success and a future deadline do not license failure or lost-funds claims', () => {
-  const facts = {
-    destination: { displayAmount: '2', symbol: 'USDC', baseUnits: '2000000', decimals: 6 },
-    quotes: [{ deadline: '2099-01-01T00:00:00.000Z', deadlinePassed: false, amountInBase: '2025107', amountInDisplay: '2.025107', originDecimals: 6 }],
+test('a failed refresh must be selected or the explanation is not shown', () => {
+  const allow = buildAllowlist({
+    orderId: 'ord_x',
+    destination: { displayAmount: '2', symbol: 'USDC', chain: 'near', baseUnits: '2000000', decimals: 6 },
+    quotes: [{ evidenceId: 'quote:qt_1', remoteStatus: 'PENDING_DEPOSIT', originSymbol: 'USDC', originChain: 'base', amountInDisplay: '2.025107', minAmountInDisplay: '2.004902', deadline: '2099-01-01T00:00:00.000Z', deadlinePassed: false, depositComparison: { relation: 'UNKNOWN' } }],
+    refresh: { failed: true, providerCalled: true },
+    storedStatus: 'awaiting_deposit',
+  });
+  assert.ok(allow.mandatoryClaimIds.includes('claim:refresh-failed'));
+  const omitted = validateNarrative({ claimIds: ['claim:display-amount'], stepId: 'step:save-note' }, { allowlist: allow });
+  assert.equal(omitted.ok, false);
+  assert.match(omitted.errors.join(' '), /refresh-failed/);
+  const ok = validateNarrative({ claimIds: allow.mandatoryClaimIds, stepId: 'step:read-again-later' }, { allowlist: allow });
+  assert.equal(ok.ok, true, ok.errors.join(' '));
+  assert.match(ok.value.summary, /not refreshed/);
+  assert.doesNotMatch(ok.value.summary, /funds may be lost/);
+});
+
+test('an open quote deadline is not rendered as lost funds or a failed read', () => {
+  const allow = buildAllowlist({
+    orderId: 'ord_x',
+    destination: { displayAmount: '2', symbol: 'USDC', chain: 'near', baseUnits: '2000000', decimals: 6 },
+    quotes: [{ evidenceId: 'quote:qt_1', remoteStatus: 'PENDING_DEPOSIT', originSymbol: 'USDC', originChain: 'base', amountInDisplay: '2.025107', minAmountInDisplay: '2.004902', deadline: '2099-01-01T00:00:00.000Z', deadlinePassed: false, depositComparison: { relation: 'UNKNOWN' } }],
     refresh: { failed: false, providerCalled: true },
-  };
-  const ids = ['quote:qt_1'];
-  const body = { evidenceCited: ids, unknowns: ['none'] };
-  assert.equal(validateNarrative({ ...body, summary: 'The refresh failed.', suggestedReviewStep: 'Look again later.' }, { evidenceIds: ids, facts }).ok, false);
-  assert.equal(validateNarrative({ ...body, summary: 'A quote is waiting. Funds may be lost.', suggestedReviewStep: 'Wait.' }, { evidenceIds: ids, facts }).ok, false);
-  assert.equal(validateNarrative({ ...body, summary: 'The provider was called. The display amount is 2 USDC.', suggestedReviewStep: 'Wait for the deposit.' }, { evidenceIds: ids, facts }).ok, true);
+    storedStatus: 'awaiting_deposit',
+  });
+  const prose = [...allow.claims, ...allow.steps].map((item) => item.text).join(' ');
+  assert.doesNotMatch(prose, /funds may be lost|lose your money|status check errored|failed status read|Generate a new quote|100 USDC|1 million|\b1M\b/);
+  assert.match(prose, /has not passed/);
+  const ok = validateNarrative({ claimIds: allow.mandatoryClaimIds, stepId: 'step:wait' }, { allowlist: allow });
+  assert.equal(ok.ok, true, ok.errors.join(' '));
+  assert.equal(ok.value.claimsChecked, undefined);
 });
 
-test('legacy stored narratives are withheld without dropping the record', () => {
-  const detail = { status: 'stored', narrativeId: 'nar_T03XaJUtujSB', narrative: { summary: '1,000,000 USDC on NEAR. Funds may be lost after the quote deadline.', evidenceCited: ['order:ord_x'], unknowns: ['none'], suggestedReviewStep: 'Generate a quote.' } };
-  const shown = presentStoredNarrative(detail);
+test('legacy free text is withheld even when an old check mark is set', () => {
+  const unsafe = { status: 'stored', narrativeId: 'nar_T03XaJUtujSB', narrative: { claimsChecked: true, summary: '100 USDC. 1 million USDC. The status check errored. You could lose your money if you wait.', evidenceCited: ['order:ord_x'], unknowns: ['none'], suggestedReviewStep: 'Generate a new quote.' } };
+  const shown = presentStoredNarrative(unsafe);
   assert.equal(shown.status, 'withheld');
   assert.equal(shown.narrative, null);
-  assert.match(shown.errors.join(' '), /kept on record/);
-  assert.equal(detail.narrative.summary.includes('1,000,000'), true);
-  const checked = presentStoredNarrative({ status: 'stored', narrative: { claimsChecked: true, summary: 'The display amount is 1 USDC.', evidenceCited: ['order:ord_x'], unknowns: [], suggestedReviewStep: 'Wait.' } });
-  assert.equal(checked.status, 'stored');
-  assert.match(checked.narrative.summary, /1 USDC/);
+  assert.match(shown.errors.join(' '), /check mark/);
+  assert.equal(unsafe.narrative.summary.includes('100 USDC'), true);
+  const older = presentStoredNarrative({ status: 'stored', narrative: { summary: '1,000,000 USDC on NEAR.', evidenceCited: ['order:ord_x'], suggestedReviewStep: 'Generate a quote.' } });
+  assert.equal(older.status, 'withheld');
+  assert.equal(older.narrative, null);
 });
 
 test('CSV prefixes formula cells and writes UNKNOWN rather than a blank zero', () => {

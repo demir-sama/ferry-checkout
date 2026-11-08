@@ -149,9 +149,9 @@ async function showOrder(id, refresh = false) {
   });
   const noteList = (o.notes || []).map((n) => el('li', {}, el('span', { class: 'small muted' }, fmtTime(n.at)), ' ', n.body));
   const narratives = (o.narratives || []).map((n) => el('article', { class: 'quote-card' },
-    el('p', { class: 'kicker' }, n.status === 'stored' ? 'Checked against stored evidence — not a payment decision' : 'Not shown as a validated explanation'),
+    el('p', { class: 'kicker' }, n.status === 'stored' ? 'Ferry sentences. NEAR AI selected them. Not a payment decision.' : 'Not shown as a validated explanation'),
     el('p', { class: 'small muted' }, `${fmtTime(n.at)} · ${n.model || 'model unknown'} · evidence ${n.factsDigest || 'unknown'}`),
-    n.status === 'stored' && n.narrative ? el('div', {}, el('p', {}, n.narrative.summary), el('p', { class: 'small' }, el('b', {}, 'Review step: '), n.narrative.suggestedReviewStep), el('div', { class: 'row' }, copyButton(n.narrative.suggestedReviewStep)), el('p', { class: 'hint' }, 'Cited ', (n.narrative.evidenceCited || []).join(', '), '. Ferry checked these sentences against the stored evidence. It did not run the step.')) : el('p', { class: 'notice err' }, (n.errors || ['This reply is not shown.']).join(' '))));
+    n.status === 'stored' && n.narrative ? el('div', {}, el('p', {}, n.narrative.summary), el('p', { class: 'small' }, el('b', {}, 'Review step: '), n.narrative.suggestedReviewStep), el('div', { class: 'row' }, copyButton(n.narrative.suggestedReviewStep)), el('p', { class: 'hint' }, 'Ferry wrote these sentences from stored evidence. NEAR AI only chose which ones. It did not run the step.')) : el('p', { class: 'notice err' }, (n.errors || ['This reply is not shown.']).join(' '))));
   fill(box,
     el('div', { class: 'row', style: 'justify-content:space-between' }, el('h3', {}, `${o.item.name} · ${o.amount.formatted} ${o.amount.symbol}`), el('button', { class: 'btn secondary small', type: 'button', onclick: () => showOrder(id, true) }, 'Refresh provider status')),
     el('p', {}, el('span', { class: `pill ${LANE_TONE[d.lane] || 'warn'}` }, LANE_LABEL[d.lane] || d.lane), ' ', el('span', { class: `pill ${statusTone(o.status)}` }, STATUS_LABEL[o.status] || o.status)),
@@ -172,7 +172,7 @@ async function showOrder(id, refresh = false) {
     noteList.length ? el('ul', {}, noteList) : el('p', { class: 'muted small' }, 'No resolution notes yet.'),
     el('form', { id: 'note-form' }, el('label', { for: 'note-body' }, 'Add a resolution note'), el('textarea', { id: 'note-body', maxlength: '2000', required: true }), el('div', { class: 'row', style: 'margin-top:12px' }, el('button', { class: 'btn secondary', type: 'submit' }, 'Save note')), el('p', { id: 'note-msg', class: 'hint', role: 'status' })),
     el('h3', {}, 'Optional explanation'),
-    el('p', { class: 'hint' }, 'NEAR AI may choose a review step from the stored evidence. A reply is shown only when its amounts, refresh outcome, and deadlines match that evidence. A rejected reply, or one stored before those checks, stays on record and is not shown as validated. It cannot mark the order paid, change the price, send a refund, sign, or message anyone.'),
+    el('p', { class: 'hint' }, 'NEAR AI can only pick claim ids and one next step from a list Ferry built for this order. Ferry writes the sentences. Free text is not shown. A rejected reply, or an older reply with a check mark, stays on record and is not shown as validated.'),
     narratives,
     el('div', { class: 'row' }, el('button', { class: 'btn secondary', type: 'button', id: 'explain-btn' }, 'Draft an evidence explanation')),
     el('p', { id: 'explain-msg', class: 'hint', role: 'status' }));

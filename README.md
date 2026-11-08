@@ -13,7 +13,7 @@ Ferry is built for the NEAR Hackathon (Nov 2026). It follows NEAR co-founder Ill
 | Exact-output request shape | Checked live with `dry: true` quotes (`npm run` → `node scripts/live-dry-quote.js`) |
 | Real deposit address → settlement → paid | Implemented and covered by fixture tests. **No mainnet payment has been verified** (NEAR Intents has no testnet). Inbox counts are stored orders, never simulated cases |
 | Reconciliation inbox | Rules diagnosis, timeline, freshness, unknowns, resolution notes, and a formula-safe CSV. Missing provider amounts stay UNKNOWN. A failed refresh is not described as fresh |
-| NEAR AI | Copy drafts were checked live on 2026-11-08 (`docs/evidence/near-ai-live-draft-2026-11-08.json`). Order explanations are shown only when their claims match the stored fact sheet (display amount, refresh outcome, quote deadlines). Older stored replies stay in the database and are not rendered as validated. Health stays unverified until a real success and auth_failed after HTTP 401/403. This repository change does not call the live API |
+| NEAR AI | Copy drafts were checked live on 2026-11-08 (`docs/evidence/near-ai-live-draft-2026-11-08.json`). Order explanations shown in the inbox are Ferry sentences. NEAR AI only selects ids from that order's evidence list. Free text, including a previous check mark, is not rendered. Health stays unverified until a real success and auth_failed after HTTP 401/403. This repository change does not call the live API |
 | Storage | SQLite locally; Postgres (Neon) in production. The test suite runs against both, with Postgres via PGlite over the wire protocol |
 | QR codes, quote replacement, extra-payment detection | Implemented and tested |
 | Merchant webhooks | Not implemented (see Docs → Limits) |

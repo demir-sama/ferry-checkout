@@ -2,22 +2,20 @@
 // It never sees or sets payout destination, prices, quotes or payment status. Every draft is validated
 // deterministically and applied only after the merchant approves specific fields.
 import { randomId, sha256 } from './ids.js';
-import { unsupportedClaims } from './narrative-claims.js';
+import { buildAllowlist, validateSelection } from './narrative-claims.js';
 import { now } from './db.js';
 import { HttpError } from './service.js';
 
 export const ACCENTS = ['ocean', 'ember', 'moss', 'violet', 'graphite', 'gold'];
 const FORBIDDEN_KEY = /recipient|payout|wallet|address|price|amount|deposit|status|paid|refund|transfer|private.?key|secret|sign|execute|message/i;
 
-// Case narrative. Separate from storefront copy. No field here can change a payment.
+// The model returns ids only. Ferry renders every sentence from the allowlist.
 export const NARRATIVE_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['summary', 'evidenceCited', 'unknowns', 'suggestedReviewStep'],
+  required: ['claimIds', 'stepId'],
   properties: {
-    summary: { type: 'string', maxLength: 600 },
-    evidenceCited: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 80 } },
-    unknowns: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 200 } },
-    suggestedReviewStep: { type: 'string', maxLength: 400 },
+    claimIds: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'string', maxLength: 80 } },
+    stepId: { type: 'string', maxLength: 80 },
   },
 };
 
@@ -78,33 +76,9 @@ export function validateDraft(raw, { liveAssetIds }) {
   } };
 }
 
-// Structural checks, then claim checks against the fact sheet. Cited ids do not license amounts,
-// refresh outcomes, or deadlines. claimsChecked is set only when a fact sheet was supplied.
-export function validateNarrative(raw, { evidenceIds, refreshFailed = false, facts = null } = {}) {
-  const errors = [];
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, errors: ['narrative is not an object'], value: null };
-  const walk = (o, p) => { for (const [k, v] of Object.entries(o)) { if (FORBIDDEN_KEY.test(k)) errors.push(`forbidden field "${p}${k}"`); if (v && typeof v === 'object') walk(v, `${p}${k}.`); } };
-  walk(raw, '');
-  const allowed = new Set(Object.keys(NARRATIVE_SCHEMA.properties));
-  for (const k of Object.keys(raw)) if (!allowed.has(k)) errors.push(`unexpected field "${k}"`);
-  for (const k of NARRATIVE_SCHEMA.required) if (!(k in raw)) errors.push(`missing field "${k}"`);
-  const text = (k, max) => { if (k in raw && !(isStr(raw[k], max) && noMarkup(raw[k]))) errors.push(`"${k}" must be plain text up to ${max} characters`); };
-  text('summary', 600); text('suggestedReviewStep', 400);
-  const known = new Set(evidenceIds || []);
-  if (!Array.isArray(raw.evidenceCited) || raw.evidenceCited.length < 1 || raw.evidenceCited.length > 12) errors.push('"evidenceCited" must list 1 to 12 evidence ids');
-  else raw.evidenceCited.forEach((id, i) => { if (typeof id !== 'string' || !known.has(id)) errors.push(`evidenceCited[${i}] is not an evidence id Ferry supplied`); });
-  if (!Array.isArray(raw.unknowns) || raw.unknowns.length > 8) errors.push('"unknowns" must be a list of at most 8 strings');
-  else raw.unknowns.forEach((u, i) => { if (!(isStr(u, 200) && noMarkup(u))) errors.push(`unknowns[${i}] must be plain text up to 200 characters`); });
-  if (refreshFailed && typeof raw.summary === 'string' && !/refresh|not rechecked|could not|failed to refresh|unavailable/i.test(raw.summary)) errors.push('summary must say the status refresh failed');
-  if (facts && raw && typeof raw === 'object') {
-    const claims = [raw.summary, raw.suggestedReviewStep, ...(Array.isArray(raw.unknowns) ? raw.unknowns : [])];
-    for (const problem of unsupportedClaims(claims, facts)) errors.push(problem);
-  }
-  if (errors.length) return { ok: false, errors, value: null };
-  return { ok: true, errors: [], value: {
-    summary: raw.summary.trim(), evidenceCited: [...new Set(raw.evidenceCited)], unknowns: raw.unknowns.map((u) => u.trim()), suggestedReviewStep: raw.suggestedReviewStep.trim(),
-    claimsChecked: facts != null,
-  } };
+// Accepts an allowlist selection. Free text is not a narrative, even if it cites real ids.
+export function validateNarrative(raw, { allowlist } = {}) {
+  return validateSelection(raw, allowlist);
 }
 
 export function createNearAi({ baseUrl, apiKey, model, maxTokens = 1500, fetchImpl = fetch, timeoutMs = 60000 }) {
@@ -142,13 +116,14 @@ export function createNearAi({ baseUrl, apiKey, model, maxTokens = 1500, fetchIm
       }, 'draft');
       return { draft: out.json, ...out };
     },
-    async narrate({ facts }) {
+    async narrate({ allowlist }) {
+      const menu = { mandatoryClaimIds: allowlist.mandatoryClaimIds, claims: allowlist.claims.map((c) => ({ id: c.id, text: c.text })), steps: allowlist.steps.map((s) => ({ id: s.id, text: s.text })) };
       const out = await complete({
         model, temperature: 0, max_tokens: maxTokens, chat_template_kwargs: thinkingOff,
         response_format: { type: 'json_schema', json_schema: { name: 'ferry_case_narrative', strict: true, schema: NARRATIVE_SCHEMA } },
         messages: [
-          { role: 'system', content: 'You explain one Ferry order using only the JSON facts. Output only the schema. Cite evidenceIds from the facts and no others. The display amount is destination.displayAmount plus the symbol. destination.baseUnits are integer smallest units; never write them as the display amount. If you mention base units, write the words "base units" next to that integer. If a value is null, call it unknown and do not substitute zero. Do not infer a shortfall from amountIn. EXACT_OUTPUT display amount is conditional on a successful eligible execution, not fiat and not unconditional. Say that a refresh failed only when refresh.failed is true. When refresh.providerCalled is false, the provider was not called and that is not a failure. Mention a quote deadline, a late deposit, or lost funds only when a quote in the facts has a deadline, and mention lost funds only when that deadline has passed. You cannot change price, payout, payment status, sign, execute a refund, or send a message. suggestedReviewStep is a draft for a person, not an action you took.' },
-          { role: 'user', content: JSON.stringify(facts) },
+          { role: 'system', content: 'Choose claimIds and one stepId from the allowlist only. Return those ids and no other fields. Do not write amounts, deadlines, refresh results, or actions. Ferry writes every sentence that is shown.' },
+          { role: 'user', content: JSON.stringify(menu) },
         ],
       }, 'explanation');
       return { narrative: out.json, ...out };
@@ -240,11 +215,12 @@ export function createAssistant({ db, ai, tokens, service }) {
     if (!ai.configured) throw new HttpError(503, 'NEAR AI is not configured on this server (NEAR_AI_API_KEY is unset). No explanation was generated.', 'NEAR_AI_NOT_CONFIGURED');
     const pack = await service.caseEvidence(merchantId, orderId, { refresh: true });
     const before = { status: pack.order.status, amount: pack.order.amount_out_base, recipient: pack.order.recipient };
+    const allowlist = buildAllowlist(pack.facts);
     let out;
-    try { out = await ai.narrate({ facts: pack.facts }); }
+    try { out = await ai.narrate({ allowlist }); }
     catch (e) { if (e.code === 'NEAR_AI_AUTH') await setStatus('auth_failed'); throw e; }
     await setStatus('verified');
-    const validation = validateNarrative(out.narrative, { evidenceIds: pack.evidenceIds, refreshFailed: pack.refreshFailed, facts: pack.facts });
+    const validation = validateNarrative(out.narrative, { allowlist });
     const narrativeId = randomId('nar', 9);
     const factsDigest = sha256(JSON.stringify(pack.facts)).slice(0, 16);
     await service.recordNarrative(orderId, {
@@ -254,7 +230,7 @@ export function createAssistant({ db, ai, tokens, service }) {
     });
     const orderAfter = await service.merchantOrder(merchantId, orderId);
     return {
-      explanation: { id: narrativeId, status: validation.ok ? 'stored' : 'invalid', model: out.model, factsDigest, narrative: validation.ok ? validation.value : null, errors: validation.errors.slice(0, 20), authority: 'none', accepted: validation.ok, label: validation.ok ? 'NEAR AI narrative checked against stored evidence — not a payment decision' : 'NEAR AI reply rejected — the text is not shown and is not a payment decision' },
+      explanation: { id: narrativeId, status: validation.ok ? 'stored' : 'invalid', model: out.model, factsDigest, narrative: validation.ok ? validation.value : null, errors: validation.errors.slice(0, 20), authority: 'none', accepted: validation.ok, composedBy: validation.ok ? 'ferry' : null, selectedBy: validation.ok ? 'near-ai' : null, label: validation.ok ? 'Ferry wrote these sentences from stored evidence. NEAR AI selected them. Not a payment decision.' : 'NEAR AI selection rejected. No explanation text is shown.' },
       diagnosis: orderAfter.diagnosis,
       unchanged: before.status === orderAfter.status && before.amount === orderAfter.amount.base && before.recipient === orderAfter.recipient,
     };

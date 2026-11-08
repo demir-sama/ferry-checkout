@@ -6,7 +6,7 @@ import { validateAddress, canBePayoutChain } from './addresses.js';
 import { verifySuccess, deriveOrderStatus, BLOCKS_NEW_QUOTE } from './reconcile.js';
 import { REMOTE_STATUSES } from './oneclick.js';
 import { diagnoseOrder, caseFacts } from './diagnose.js';
-import { presentStoredNarrative } from './narrative-claims.js';
+import { presentStoredNarrative, isServerNarrative } from './narrative-claims.js';
 import { toCsv, RECONCILE_HEADERS } from './csv.js';
 
 export class HttpError extends Error { constructor(status, message, code) { super(message); this.status = status; this.code = code; } }
@@ -149,7 +149,7 @@ export function createService({ db, cfg, oneClick, tokens, log = () => {} }) {
         return { id: e.detail.narrativeId || `event:${e.id}`, status: shown.status, model: e.detail.model || null, at: e.at, factsDigest: e.detail.factsDigest || null, narrative: shown.narrative, errors: shown.errors, refreshFailed: !!e.detail.refreshFailed };
       });
       v.events = events.map((e) => {
-        if (e.kind !== 'ai_narrative' || e.detail?.narrative?.claimsChecked === true) return e;
+        if (e.kind !== 'ai_narrative' || isServerNarrative(e.detail?.narrative)) return e;
         if (!e.detail?.narrative) return e;
         return { ...e, detail: { ...e.detail, narrative: { withheld: true } } };
       });
