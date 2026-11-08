@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Checkout — Ferry</title><meta name="description" content="Pay with NEAR Intents">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#14181E">
 <link rel="stylesheet" href="/styles.css"></head><body>
 <header class="top"><div class="wrap">
 <a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
@@ -17,7 +17,7 @@
   <div class="card">
    <div class="muted small" id="co-merchant"></div>
    <h2 id="co-item" style="margin-top:4px"></h2><p id="co-desc" class="muted"></p>
-   <div class="muted small">Merchant receives exactly</div><div class="amount" id="co-amount"></div>
+   <div class="muted small">Destination amount, if an eligible swap completes</div><div class="amount" id="co-amount"></div>
    <div class="small muted" id="co-dest"></div>
    <div style="margin-top:14px" class="status-big"><span class="dot" id="co-dot"></span><span id="co-status"></span></div>
    <p id="co-note" class="small muted"></p>
@@ -26,7 +26,7 @@
    <h3 id="co-form-title">Pay with</h3>
    <label for="co-asset">Token and chain</label><select id="co-asset" required></select>
    <label for="co-refund">Your refund address on that chain</label><input id="co-refund" autocomplete="off" spellcheck="false" required aria-describedby="co-refund-err"><p id="co-refund-err" class="hint err" role="alert"></p>
-   <p class="hint">If the payment can't complete, NEAR Intents refunds you here, on the same chain you paid from.</p>
+   <p class="hint">Refund address on the chain you pay from. 1Click documents a provider refund for a deposit below the minimum, and for unused input after a completed swap. A deposit after the quote deadline can put funds at risk. Ferry does not promise a late refund, and it does not send refunds itself.</p>
    <div id="co-replace" class="notice warn hidden" style="margin-top:14px"><label style="display:flex;gap:10px;align-items:flex-start;margin:0;font-weight:500"><input type="checkbox" id="co-replace-ok" style="width:auto;min-height:0;margin-top:4px"> I have not sent anything to the current deposit address. I understand it stays valid until its deadline, so sending to both addresses would pay twice.</label></div>
    <div class="row" style="margin-top:16px"><button class="btn accent" type="submit" id="co-quote-btn">Get deposit instructions</button></div>
    <p id="co-msg" class="hint" role="alert"></p>

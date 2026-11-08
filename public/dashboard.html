@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Dashboard — Ferry</title><meta name="description" content="Ferry merchant dashboard">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#14181E">
 <link rel="stylesheet" href="/styles.css"></head><body>
 <header class="top"><div class="wrap">
 <a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
@@ -51,16 +51,30 @@
    <label for="i-amount">Amount <span id="i-unit" class="muted"></span></label><input id="i-amount" inputmode="decimal" required>
    <div class="row" style="margin-top:16px"><button class="btn" type="submit">Create checkout link</button></div><p id="invoice-msg" class="hint" role="status"></p>
   </form>
-  <div class="card" style="grid-column:1/-1"><h3>Products</h3><div class="table-wrap"><table><thead><tr><th>Name</th><th>Price</th><th>Link</th><th></th></tr></thead><tbody id="product-rows"></tbody></table></div></div>
+  <div class="card" style="grid-column:1/-1"><h3>Products</h3><div class="table-wrap"><table class="stack"><thead><tr><th>Name</th><th>Price</th><th>Link</th><th></th></tr></thead><tbody id="product-rows"></tbody></table></div></div>
  </div>
  <div data-panel="orders" class="hidden">
-  <div class="card"><div class="row" style="justify-content:space-between"><h3>Orders</h3><button id="reload-orders" class="btn secondary small" type="button">Refresh</button></div>
-   <div class="table-wrap"><table><thead><tr><th>Order</th><th>Item</th><th>Amount</th><th>Status</th><th>Created</th></tr></thead><tbody id="order-rows"></tbody></table></div></div>
+  <div class="card">
+   <div class="row" style="justify-content:space-between;align-items:flex-end">
+    <div><span class="kicker">Reconciliation</span><h3>Payment inbox</h3></div>
+    <div class="row"><button id="export-csv" class="btn secondary small" type="button">Download CSV</button><button id="reload-orders" class="btn secondary small" type="button">Refresh</button></div>
+   </div>
+   <p class="muted small">Paid, processing, and what needs a person. Counts come only from orders stored for this store. The simulated cases at the bottom are not included.</p>
+   <div id="lane-filters" class="filters" role="group" aria-label="Filter orders"></div>
+   <p id="orders-msg" class="hint" role="status">Loading orders…</p>
+   <div class="table-wrap"><table class="stack"><thead><tr><th>Order</th><th>Item</th><th>Amount</th><th>Lane</th><th>Status</th><th>Created</th></tr></thead><tbody id="order-rows"></tbody></table></div>
+  </div>
   <div id="order-detail" class="card hidden" style="margin-top:20px"></div>
+  <section id="simulated" class="sim-block" aria-label="Simulated cases">
+   <p class="badge-sample">SIMULATED</p>
+   <h3>Demonstration cases</h3>
+   <p class="muted small" id="sim-notice">Loading simulated cases…</p>
+   <div id="sim-cases" class="grid"></div>
+  </section>
  </div>
  <div data-panel="assistant" class="hidden grid cols-2">
   <form id="ai-form" class="card"><h3>NEAR AI setup assistant</h3>
-   <p class="muted small">Describe your store. NEAR AI Cloud drafts a tagline, About text, button label, accent colour, product copy, FAQ and suggested payment assets into a strict schema. Ferry checks the draft and shows you a diff. Nothing is applied until you approve it.</p>
+   <p class="muted small">This assistant only drafts storefront copy. Payment explanations live on each order in the inbox, and they cannot change a price, a payout, or a payment. Describe your store. NEAR AI Cloud drafts a tagline, About text, button label, accent colour, product copy, FAQ and suggested payment assets into a strict schema. Ferry checks the draft and shows you a diff. Nothing is applied until you approve it.</p>
    <div id="ai-status"></div>
    <label for="ai-brief">Store brief</label><textarea id="ai-brief" maxlength="1500" placeholder="We sell hand-bound notebooks and ship worldwide…"></textarea>
    <div class="row" style="margin-top:16px"><button id="ai-go" class="btn" type="submit">Draft with NEAR AI</button></div><p id="ai-msg" class="hint" role="status"></p>

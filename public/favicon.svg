@@ -1,7 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Ferry">
-  <rect width="64" height="64" rx="16" fill="#0E1A2B"/>
-  <path d="M14 36 C 22 14, 42 14, 50 36" fill="none" stroke="#2FD3C1" stroke-width="5" stroke-linecap="round"/>
-  <circle cx="14" cy="36" r="5" fill="#F6F3EC"/>
-  <circle cx="50" cy="36" r="5" fill="#FF7A59"/>
-  <path d="M10 46 q5.5 -4 11 0 t11 0 t11 0 t11 0" fill="none" stroke="#2FD3C1" stroke-width="3" stroke-linecap="round" opacity=".55"/>
+  <rect width="64" height="64" rx="16" fill="#1C222B"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="14.5" fill="none" stroke="#8EF0DE" stroke-width="1.5"/>
+  <path d="M12 42h40l-5 8H17z" fill="#2A3340" stroke="#F3EEE4" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M16 38C24 16 40 16 48 38" fill="none" stroke="#8EF0DE" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="16" cy="38" r="3.5" fill="#F3EEE4"/>
+  <circle cx="48" cy="38" r="3.5" fill="#FF8B6A"/>
 </svg>

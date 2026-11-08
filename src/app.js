@@ -6,6 +6,7 @@ import { randomId, sha256 } from './ids.js';
 import { now, rateHit } from './db.js';
 import QRCode from 'qrcode';
 import { HttpError } from './service.js';
+import { simulatedCases } from './simulated.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.txt': 'text/plain; charset=utf-8' };
@@ -78,6 +79,7 @@ export function createApp({ db, cfg, service, assistant, ai, tokens, oneClick, l
       if (!cfg.cronSecret || req.headers.authorization !== `Bearer ${cfg.cronSecret}`) throw new HttpError(401, 'Unauthorized');
       return send(res, 200, { polledOrders: await service.pollActive() });
     }
+    if (m === 'GET' && p === '/api/simulated-cases') return send(res, 200, simulatedCases());
     if (m === 'GET' && p === '/api/assets') {
       const t = await tokens.list();
       return send(res, 200, { source: t.source, fetchedAt: t.fetchedAt, count: t.list.length, assets: t.list });
@@ -141,9 +143,22 @@ export function createApp({ db, cfg, service, assistant, ai, tokens, oneClick, l
       if (m === 'GET' && p === '/api/merchant/products') return send(res, 200, { products: await service.listProducts(merchantId) });
       if (m === 'POST' && p === '/api/merchant/products') return send(res, 201, { product: await service.createProduct(merchantId, await readJson(req)) });
       if (m === 'POST' && (mt = p.match(/^\/api\/merchant\/products\/(prd_[A-Za-z0-9_-]+)\/(activate|deactivate)$/))) { await service.setProductActive(merchantId, mt[1], mt[2] === 'activate'); return send(res, 200, { ok: true }); }
-      if (m === 'GET' && p === '/api/merchant/orders') return send(res, 200, { orders: await service.listOrders(merchantId) });
+      if (m === 'GET' && p === '/api/merchant/orders') return send(res, 200, { orders: await service.listOrders(merchantId), lanes: { paid: 'Paid', processing: 'Processing', attention: 'Needs attention', open: 'Open — no deposit in flight' } });
+      if (m === 'GET' && p === '/api/merchant/reconciliation.csv') {
+        const csv = await service.reconciliationCsv(merchantId);
+        res.statusCode = 200; res.setHeader('content-type', 'text/csv; charset=utf-8'); res.setHeader('content-disposition', 'attachment; filename="ferry-reconciliation.csv"'); res.setHeader('cache-control', 'no-store');
+        return res.end(csv);
+      }
       if (m === 'POST' && p === '/api/merchant/orders') { const o = await service.createInvoice(merchantId, await readJson(req)); return send(res, 201, { orderId: o.orderId, checkoutUrl: o.checkoutUrl }); }
       if (m === 'GET' && (mt = p.match(/^\/api\/merchant\/orders\/(ord_[A-Za-z0-9_-]+)$/))) return send(res, 200, await service.merchantOrder(merchantId, mt[1], { refresh: url.searchParams.get('refresh') === '1' }));
+      if (m === 'POST' && (mt = p.match(/^\/api\/merchant\/orders\/(ord_[A-Za-z0-9_-]+)\/notes$/))) {
+        const b = await readJson(req);
+        return send(res, 201, { note: await service.addResolutionNote(merchantId, mt[1], b.body) });
+      }
+      if (m === 'POST' && (mt = p.match(/^\/api\/merchant\/orders\/(ord_[A-Za-z0-9_-]+)\/explain$/))) {
+        await limit('ai', merchantId);
+        return send(res, 200, await assistant.explain(merchantId, mt[1]));
+      }
       if (m === 'GET' && p === '/api/merchant/ai/drafts') return send(res, 200, { drafts: await assistant.list(merchantId) });
       if (m === 'POST' && p === '/api/merchant/ai/drafts') {
         await limit('ai', merchantId);

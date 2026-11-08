@@ -16,7 +16,8 @@ export async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) { const e = new Error(data?.error || `Request failed (${res.status})`); e.status = res.status; e.code = data?.code; throw e; }
   return data;
 }
-export const STATUS_LABEL = { open: 'Awaiting payment method', awaiting_deposit: 'Awaiting deposit', processing: 'Deposit received — settling', incomplete_deposit: 'Deposit below required amount', paid: 'Paid', refunded: 'Refunded', failed: 'Failed', expired: 'Expired', quote_expired: 'Quote expired', needs_review: 'Needs review' };
+export const STATUS_LABEL = { open: 'Awaiting payment method', awaiting_deposit: 'Awaiting deposit', processing: 'Deposit received — settling', incomplete_deposit: 'Deposit below required amount', paid: 'Paid', refunded: 'Provider refunded', failed: 'Failed', expired: 'Invoice expired', quote_expired: 'Quote deadline passed', needs_review: 'Needs review' };
+export const LANE_LABEL = { paid: 'Paid', processing: 'Processing', attention: 'Needs attention', open: 'Open' };
 export const statusTone = (s) => (s === 'paid' ? 'ok' : ['failed', 'expired', 'needs_review', 'refunded', 'incomplete_deposit'].includes(s) ? 'bad' : 'warn');
 export function copyButton(text) {
   const b = el('button', { class: 'btn secondary small', type: 'button', 'aria-label': 'Copy to clipboard' }, 'Copy');

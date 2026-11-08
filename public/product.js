@@ -9,6 +9,7 @@ try {
     el('h2', { style: 'margin-top:4px' }, p.name),
     p.description ? el('p', { class: 'muted' }, p.description) : null,
     el('div', { class: 'amount' }, `${p.price} ${p.symbol}`),
+    el('p', { class: 'hint' }, 'This destination amount is what an exact-output quote asks NEAR Intents to deliver if an eligible swap completes. It is not a fiat guarantee.'),
     prof.tagline ? el('p', { class: 'small muted' }, prof.tagline) : null,
     el('div', { class: 'row', style: 'margin-top:16px' }, el('button', { class: 'btn accent', id: 'buy', type: 'button' }, prof.buttonLabel || 'Pay with crypto')),
     el('p', { class: 'hint', id: 'buy-msg', role: 'alert' }),
