@@ -395,6 +395,79 @@ export function defineSuite(label, getOpts) {
     } finally { await t.close(); }
   });
 
+  test(`[${label}] a no-quote explanation cannot repeat the live false claims, and older text stays stored but hidden`, async () => {
+    const fake = fakeOneClick();
+    const t = await boot({ aiKey: 'sample-key-not-real', fake });
+    try {
+      await merchantWithProduct(t, '1');
+      const inv = await t.req('/api/merchant/orders', { method: 'POST', body: { title: 'One USDC', description: '', amount: '1' } });
+      assert.equal(inv.status, 201, JSON.stringify(inv.data));
+      const id = inv.data.orderId;
+      assert.equal((await t.req(`/api/merchant/orders/${id}/notes`, { method: 'POST', body: { body: 'QA note four' } })).status, 201);
+      assert.equal((await t.req(`/api/merchant/orders/${id}/notes`, { method: 'POST', body: { body: 'QA note five' } })).status, 201);
+      const before = await t.req(`/api/merchant/orders/${id}`);
+      assert.equal(before.data.amount.base, '1000000');
+      assert.equal(before.data.amount.formatted, '1');
+      assert.equal(before.data.status, 'open');
+      assert.equal(before.data.quotes.length, 0);
+      assert.equal(before.data.diagnosis.freshness.state, 'no_quote');
+      const evidenceIds = [`order:${id}`, ...before.data.events.map((e) => `event:${e.id}`)];
+      assert.ok(evidenceIds.length >= 3);
+      fake.state.aiNarrative = {
+        summary: 'The order is for 1,000,000 USDC on NEAR. A refresh was attempted but failed to produce quotes; the status was not rechecked.',
+        evidenceCited: evidenceIds.slice(0, 12),
+        unknowns: ['refresh attempted but failed to produce quotes'],
+        suggestedReviewStep: 'Generate a quote. Funds may be lost after the quote deadline.',
+      };
+      const statusCalls = fake.calls.filter((c) => c.path === '/v0/status').length;
+      const bad = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+      assert.equal(bad.status, 200, JSON.stringify(bad.data));
+      assert.equal(bad.data.explanation.status, 'invalid');
+      assert.equal(bad.data.explanation.narrative, null);
+      assert.equal(bad.data.explanation.accepted, false);
+      assert.match(bad.data.explanation.errors.join(' '), /base units/);
+      assert.match(bad.data.explanation.errors.join(' '), /failed refresh/);
+      assert.match(bad.data.explanation.errors.join(' '), /quote deadline/);
+      assert.equal(bad.data.unchanged, true);
+      assert.equal(fake.calls.filter((c) => c.path === '/v0/status').length, statusCalls);
+      const sent = JSON.parse(fake.calls.filter((c) => c.path === '/v1/chat/completions').at(-1).body);
+      const facts = JSON.parse(sent.messages[1].content);
+      assert.equal(facts.destination.displayAmount, '1');
+      assert.equal(facts.destination.baseUnits, '1000000');
+      assert.equal(facts.refresh.failed, false);
+      assert.equal(facts.refresh.providerCalled, false);
+      assert.equal(facts.quotes.length, 0);
+      assert.equal(facts.freshness, 'no_quote');
+      const hidden = await t.req(`/api/merchant/orders/${id}`);
+      assert.equal(hidden.data.status, 'open');
+      assert.equal(hidden.data.amount.formatted, '1');
+      assert.equal(hidden.data.narratives.at(-1).status, 'invalid');
+      assert.equal(hidden.data.narratives.at(-1).narrative, null);
+      assert.doesNotMatch(JSON.stringify(hidden.data), /1,000,000|1000000 USDC/);
+      fake.state.aiNarrative = {
+        summary: 'The display amount is 1 USDC. No quote is stored. The provider was not called, so this is not a failed refresh.',
+        evidenceCited: [`order:${id}`],
+        unknowns: ['No provider amount is missing, because no quote was stored.'],
+        suggestedReviewStep: 'Leave the order open until the buyer requests a quote.',
+      };
+      const ok = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+      assert.equal(ok.data.explanation.status, 'stored', JSON.stringify(ok.data));
+      assert.equal(ok.data.explanation.narrative.claimsChecked, true);
+      assert.equal(ok.data.explanation.accepted, true);
+      assert.doesNotMatch(ok.data.explanation.narrative.summary, /1,000,000|1000000/);
+      await t.rt.db.run('INSERT INTO order_events(order_id, kind, detail, at) VALUES (?,?,?,?)', [id, 'ai_narrative', JSON.stringify({ narrativeId: 'nar_legacy', status: 'stored', narrative: { summary: '1,000,000 USDC on NEAR. Funds may be lost after the quote deadline.', evidenceCited: [`order:${id}`], unknowns: ['none'], suggestedReviewStep: 'Generate a quote.' } }), new Date().toISOString()]);
+      const after = await t.req(`/api/merchant/orders/${id}`);
+      const legacy = after.data.narratives.find((n) => n.id === 'nar_legacy');
+      assert.equal(legacy.status, 'withheld');
+      assert.equal(legacy.narrative, null);
+      assert.doesNotMatch(JSON.stringify(after.data), /1,000,000/);
+      const raw = await t.rt.db.get("SELECT detail FROM order_events WHERE order_id=? AND kind='ai_narrative' ORDER BY id DESC LIMIT 1", [id]);
+      assert.match(String(raw.detail), /1,000,000/);
+      assert.equal(after.data.status, 'open');
+      assert.equal(after.data.amount.base, '1000000');
+    } finally { await t.close(); }
+  });
+
   test(`[${label}] rate limits are enforced from the database`, async () => {
     const t = await boot();
     try {
