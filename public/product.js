@@ -1,10 +1,10 @@
-import { $, el, api } from './common.js';
+import { $, el, api, fill } from './common.js';
 const id = location.pathname.split('/').pop();
 const box = $('#pr');
 try {
   const p = await api(`/api/public/products/${id}`);
   const prof = p.merchant.profile || {};
-  box.replaceChildren(
+  fill(box, 
     el('div', { class: 'muted small' }, p.merchant.name),
     el('h2', { style: 'margin-top:4px' }, p.name),
     p.description ? el('p', { class: 'muted' }, p.description) : null,
@@ -18,4 +18,4 @@ try {
     try { const o = await api(`/api/public/products/${id}/orders`, { method: 'POST' }); location.assign(o.checkoutPath); }
     catch (err) { $('#buy-msg').textContent = err.message; e.target.disabled = false; }
   });
-} catch (e) { box.replaceChildren(el('h2', {}, 'Product unavailable'), el('p', { class: 'muted' }, e.message)); }
+} catch (e) { fill(box, el('h2', {}, 'Product unavailable'), el('p', { class: 'muted' }, e.message)); }

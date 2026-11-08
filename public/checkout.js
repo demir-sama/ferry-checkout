@@ -1,4 +1,5 @@
-import { $, el, api, STATUS_LABEL, statusTone, copyButton, fmtTime } from './common.js';
+import { $, el, api, STATUS_LABEL, statusTone, copyButton, fmtTime, fill } from './common.js';
+import { validateAddress } from './addresses.js';
 const secret = location.pathname.split('/').pop();
 let order = null, assets = [], timer = null, countdown = null;
 const FINAL = new Set(['paid', 'expired']);
@@ -6,12 +7,12 @@ const FINAL = new Set(['paid', 'expired']);
 function render(o) {
   order = o;
   $('#co-loading').classList.add('hidden'); $('#co').classList.remove('hidden');
-  $('#co-sample').replaceChildren(o.merchant.isSample ? el('p', { class: 'badge-sample' }, 'This checkout belongs to a sample store used for local development. Anything you send is still a real mainnet payment.') : '');
+  fill($('#co-sample'), o.merchant.isSample ? el('p', { class: 'badge-sample' }, 'This checkout belongs to a sample store used for local development. Anything you send is still a real mainnet payment.') : '');
   $('#co-merchant').textContent = o.merchant.name;
   $('#co-item').textContent = o.item.name;
   $('#co-desc').textContent = o.item.description || '';
   $('#co-amount').textContent = `${o.amount.formatted} ${o.amount.symbol}`;
-  $('#co-dest').replaceChildren('on ', el('b', {}, o.amount.chain), ' to ', el('span', { class: 'mono' }, o.recipient));
+  fill($('#co-dest'), 'on ', el('b', {}, o.amount.chain), ' to ', el('span', { class: 'mono' }, o.recipient));
   $('#co-status').textContent = STATUS_LABEL[o.status] || o.status;
   $('#co-dot').className = `dot ${statusTone(o.status)}`;
   $('#co-note').textContent = o.statusNote || (o.status === 'paid' ? `Settled ${fmtTime(o.updatedAt)}.` : `Order expires ${fmtTime(o.expiresAt)}.`);
@@ -60,14 +61,14 @@ function renderPay(o, q) {
   const txs = [...(d.originChainTxs || []), ...(d.destinationChainTxs || [])];
   if (txs.length) kids.push(el('p', { class: 'small' }, 'Transactions: ', ...txs.map((t, i) => [i ? ' · ' : '', /^https:\/\//.test(t.explorerUrl) ? el('a', { href: t.explorerUrl, rel: 'noopener noreferrer', target: '_blank' }, `${t.hash.slice(0, 10)}…`) : t.hash.slice(0, 10)])));
   kids.push(el('p', { class: 'small muted' }, 'Track on the ', el('a', { href: 'https://explorer.near-intents.org', rel: 'noopener noreferrer', target: '_blank' }, 'NEAR Intents explorer'), ` using deposit address ${q.depositAddress.slice(0, 12)}…`));
-  box.replaceChildren(...kids);
+  fill(box, ...kids);
 }
 
 function renderHistory(o) {
   const box = $('#co-history');
   if (o.quotes.length < 2) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
-  box.replaceChildren(el('h3', {}, 'Earlier quotes for this order'), el('p', { class: 'small muted' }, 'Only send to the latest instructions. An earlier address still works until its own deadline, so sending to two addresses would mean paying twice.'),
+  fill(box, el('h3', {}, 'Earlier quotes for this order'), el('p', { class: 'small muted' }, 'Only send to the latest instructions. An earlier address still works until its own deadline, so sending to two addresses would mean paying twice.'),
     el('ul', { class: 'small' }, o.quotes.slice(0, -1).map((q) => el('li', {}, `${q.amountInFormatted} ${q.originSymbol} (${q.originChain}) · ${q.remoteStatus} · deadline ${fmtTime(q.deadline)}`))));
 }
 
@@ -82,11 +83,26 @@ function fillAssets() {
   const allowed = order.acceptedAssets.length ? assets.filter((a) => order.acceptedAssets.includes(a.assetId)) : assets;
   const byChain = {};
   for (const a of allowed) (byChain[a.blockchain] ||= []).push(a);
-  sel.replaceChildren(el('option', { value: '' }, 'Choose a token…'), ...Object.keys(byChain).sort().map((c) => el('optgroup', { label: c }, byChain[c].sort((x, y) => x.symbol.localeCompare(y.symbol)).map((a) => el('option', { value: a.assetId }, `${a.symbol} · ${a.blockchain}`)))));
+  fill(sel, el('option', { value: '' }, 'Choose a token…'), ...Object.keys(byChain).sort().map((c) => el('optgroup', { label: c }, byChain[c].sort((x, y) => x.symbol.localeCompare(y.symbol)).map((a) => el('option', { value: a.assetId }, `${a.symbol} · ${a.blockchain}`)))));
 }
-$('#co-asset').addEventListener('change', () => { const a = assets.find((x) => x.assetId === $('#co-asset').value); $('#co-refund').placeholder = a ? `Your ${a.blockchain} address` : ''; });
+function checkRefund({ quiet = false } = {}) {
+  const input = $('#co-refund'); const a = assets.find((x) => x.assetId === $('#co-asset').value);
+  const v = input.value.trim();
+  let problem = null;
+  if (!a) problem = 'Choose the token you will pay with first.';
+  else if (!v) problem = `Enter your ${a.blockchain} refund address.`;
+  else { const r = validateAddress(a.blockchain, v); if (!r.ok) problem = `Refund address: ${r.reason}`; }
+  if (problem && (v || !quiet)) { input.setAttribute('aria-invalid', 'true'); $('#co-refund-err').textContent = problem; }
+  else { input.removeAttribute('aria-invalid'); $('#co-refund-err').textContent = ''; }
+  return problem;
+}
+$('#co-asset').addEventListener('change', () => { const a = assets.find((x) => x.assetId === $('#co-asset').value); $('#co-refund').placeholder = a ? `Your ${a.blockchain} address` : ''; if ($('#co-refund').value.trim()) checkRefund(); });
+$('#co-refund').addEventListener('blur', () => checkRefund({ quiet: true }));
+$('#co-refund').addEventListener('input', () => { if ($('#co-refund').getAttribute('aria-invalid')) checkRefund({ quiet: true }); });
 $('#co-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const problem = checkRefund();
+  if (problem) { $('#co-msg').textContent = problem; $('#co-refund').focus(); return; }
   const btn = $('#co-quote-btn'); btn.disabled = true; $('#co-msg').textContent = 'Requesting an exact-output quote from NEAR Intents…';
   const replacing = !$('#co-replace').classList.contains('hidden');
   if (replacing && !$('#co-replace-ok').checked) { $('#co-msg').textContent = 'Confirm you have not sent funds to the current deposit address first.'; btn.disabled = false; return; }
@@ -98,4 +114,4 @@ $('#co-form').addEventListener('submit', async (e) => {
 try {
   const [o, a] = await Promise.all([api(`/api/checkout/${secret}`), api('/api/assets')]);
   assets = a.assets; render(o); fillAssets(); refresh();
-} catch (e) { $('#co-loading').replaceChildren(el('h2', {}, 'Checkout not found'), el('p', { class: 'muted' }, e.message)); }
+} catch (e) { fill($('#co-loading'), el('h2', {}, 'Checkout not found'), el('p', { class: 'muted' }, e.message)); }

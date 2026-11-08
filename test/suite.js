@@ -52,6 +52,7 @@ export function defineSuite(label, getOpts) {
       const view = await t.req(`/api/checkout/${secret}`);
       assert.equal(view.data.amount.base, '2000000'); assert.equal(view.data.status, 'open'); assert.ok(!JSON.stringify(view.data).includes(secret));
       assert.equal((await quote(t, secret, { refundTo: 'ferry-sample.near' })).status, 400); // wrong-chain refund refused before 1Click
+      assert.equal(t.fake.calls.filter((c) => c.path === '/v0/quote').length, 0, 'invalid refund must not reach the provider');
       const q = await quote(t, secret);
       assert.equal(q.status, 201, JSON.stringify(q.data));
       const sent = JSON.parse(t.fake.calls.find((c) => c.path === '/v0/quote').body);

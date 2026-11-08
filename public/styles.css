@@ -65,3 +65,4 @@ code,pre{font-family:var(--mono);font-size:13px}pre{background:#0E1A2B;color:#DD
 .spinner{width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite;display:inline-block}@keyframes spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.spinner{animation:none}}
 .qr{display:block;margin:12px 0 4px;width:184px;height:184px;border:1px solid var(--line);border-radius:12px;background:#fff;padding:6px}
+.hint.err{color:#B3261E}.hint.err:empty{display:none}input[aria-invalid="true"]{border-color:#B3261E;outline-color:#B3261E}

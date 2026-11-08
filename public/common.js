@@ -30,3 +30,5 @@ export function initNav() {
 }
 export const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
 initNav();
+// Replace a node's children, skipping null/undefined/false so optional fields never render as literal "null".
+export function fill(n, ...kids) { n.replaceChildren(...kids.flat().filter((k) => k != null && k !== false).map((k) => (k instanceof Node ? k : String(k)))); return n; }

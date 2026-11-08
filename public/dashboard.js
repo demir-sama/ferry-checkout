@@ -1,4 +1,4 @@
-import { $, $$, el, api, STATUS_LABEL, statusTone, copyButton, fmtTime } from './common.js';
+import { $, $$, el, api, STATUS_LABEL, statusTone, copyButton, fmtTime, fill } from './common.js';
 let me = null, assets = [], nearAi = null;
 const PAYOUT_CHAINS = new Set(['near', 'sol', 'eth', 'base', 'arb', 'op', 'pol', 'bsc', 'avax', 'gnosis', 'bera', 'scroll', 'monad', 'xlayer', 'plasma', 'adi', 'aurora', 'abs', 'hlevm', 'hood']);
 const msg = (id, text, tone) => { const n = $(id); n.textContent = text || ''; n.style.color = tone === 'err' ? 'var(--danger)' : tone === 'ok' ? 'var(--ok)' : ''; };
@@ -12,7 +12,7 @@ async function boot() {
 }
 function renderHeader() {
   $('#store-name').textContent = me.name;
-  $('#sample-flag').replaceChildren(me.isSample ? el('span', { class: 'pill warn' }, 'Sample merchant (local dev)') : '');
+  fill($('#sample-flag'), me.isSample ? el('span', { class: 'pill warn' }, 'Sample merchant (demo)') : '');
 }
 function renderUnits() { const u = me.payout ? `(${me.payout.symbol} on ${me.payout.chain})` : '(set a payout first)'; $('#p-unit').textContent = u; $('#i-unit').textContent = u; }
 
@@ -20,7 +20,7 @@ function renderSettings() {
   $('#s-name').value = me.name;
   const sel = $('#s-asset');
   const payable = assets.filter((a) => PAYOUT_CHAINS.has(a.blockchain)).sort((a, b) => a.blockchain.localeCompare(b.blockchain) || a.symbol.localeCompare(b.symbol));
-  sel.replaceChildren(el('option', { value: '' }, 'Choose the asset you receive…'), ...payable.map((a) => el('option', { value: a.assetId, selected: me.payout?.assetId === a.assetId }, `${a.symbol} · ${a.blockchain}`)));
+  fill(sel, el('option', { value: '' }, 'Choose the asset you receive…'), ...payable.map((a) => el('option', { value: a.assetId, selected: me.payout?.assetId === a.assetId }, `${a.symbol} · ${a.blockchain}`)));
   $('#s-recipient').value = me.payout?.recipient || '';
   const hint = () => { const a = assets.find((x) => x.assetId === sel.value); $('#recipient-hint').textContent = !a ? 'Paste an address you control.' : a.blockchain === 'near' ? 'A NEAR account such as shop.near or a 64-character implicit account. It must be registered for this token\'s storage, or delivery can fail.' : a.blockchain === 'sol' ? 'A Solana wallet address (base58).' : `A 0x… address on ${a.blockchain}.`; };
   sel.onchange = hint; hint();
@@ -39,7 +39,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
 function renderAccepted() {
   const box = $('#asset-list'); const chosen = new Set(me.acceptedAssets);
   const f = $('#asset-filter').value.toLowerCase();
-  box.replaceChildren(...assets.filter((a) => !f || `${a.symbol} ${a.blockchain}`.toLowerCase().includes(f)).sort((a, b) => a.symbol.localeCompare(b.symbol)).map((a) =>
+  fill(box, ...assets.filter((a) => !f || `${a.symbol} ${a.blockchain}`.toLowerCase().includes(f)).sort((a, b) => a.symbol.localeCompare(b.symbol)).map((a) =>
     el('label', { style: 'display:flex;gap:8px;align-items:center;font-weight:500;margin:6px 0' }, el('input', { type: 'checkbox', value: a.assetId, checked: chosen.has(a.assetId), style: 'width:auto;min-height:0' }), `${a.symbol} · ${a.blockchain}`)));
   $('#accepted-count').textContent = chosen.size ? `${chosen.size} selected` : 'All live assets accepted';
 }
@@ -49,7 +49,7 @@ $('#save-accepted').addEventListener('click', async () => { try { me = (await ap
 
 async function loadProducts() {
   const { products } = await api('/api/merchant/products');
-  $('#product-rows').replaceChildren(...(products.length ? products.map((p) => el('tr', {},
+  fill($('#product-rows'), ...(products.length ? products.map((p) => el('tr', {},
     el('td', {}, el('b', {}, p.name), el('div', { class: 'small muted mono' }, p.id)), el('td', { class: 'mono' }, `${p.price} ${p.symbol}`),
     el('td', {}, p.active ? el('div', { class: 'row' }, el('a', { href: `/p/${p.id}`, target: '_blank', rel: 'noopener' }, 'Open'), copyButton(`${location.origin}/p/${p.id}`)) : el('span', { class: 'muted' }, 'inactive')),
     el('td', {}, el('button', { class: 'btn secondary small', type: 'button', onclick: async () => { await api(`/api/merchant/products/${p.id}/${p.active ? 'deactivate' : 'activate'}`, { method: 'POST', body: {} }); loadProducts(); } }, p.active ? 'Deactivate' : 'Activate')))) : [el('tr', {}, el('td', { colspan: 4, class: 'muted' }, 'No products yet.'))]));
@@ -64,14 +64,14 @@ $('#invoice-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
     const o = await api('/api/merchant/orders', { method: 'POST', body: { title: $('#i-title').value, description: $('#i-desc').value, amount: $('#i-amount').value.trim() } });
-    e.target.reset(); $('#invoice-msg').replaceChildren('Checkout link (send it to your buyer): ', el('a', { href: o.checkoutUrl, target: '_blank', rel: 'noopener' }, 'open'), ' ', copyButton(o.checkoutUrl));
+    e.target.reset(); fill($('#invoice-msg'), 'Checkout link (send it to your buyer): ', el('a', { href: o.checkoutUrl, target: '_blank', rel: 'noopener' }, 'open'), ' ', copyButton(o.checkoutUrl));
     loadOrders();
   } catch (err) { msg('#invoice-msg', err.message, 'err'); }
 });
 
 async function loadOrders() {
   const { orders } = await api('/api/merchant/orders');
-  $('#order-rows').replaceChildren(...(orders.length ? orders.map((o) => el('tr', {},
+  fill($('#order-rows'), ...(orders.length ? orders.map((o) => el('tr', {},
     el('td', {}, el('a', { href: '#', onclick: (e) => { e.preventDefault(); showOrder(o.id); } }, o.id)), el('td', {}, o.item), el('td', { class: 'mono' }, `${o.amount} ${o.symbol}`),
     el('td', {}, el('span', { class: `pill ${statusTone(o.status)}` }, STATUS_LABEL[o.status] || o.status), o.extraPayment ? el('span', { class: 'pill bad', style: 'margin-left:6px' }, 'Extra payment') : null), el('td', { class: 'small' }, fmtTime(o.createdAt)))) : [el('tr', {}, el('td', { colspan: 5, class: 'muted' }, 'No orders yet.'))]));
 }
@@ -79,7 +79,7 @@ $('#reload-orders').addEventListener('click', loadOrders);
 async function showOrder(id, refresh = false) {
   const o = await api(`/api/merchant/orders/${id}${refresh ? '?refresh=1' : ''}`);
   const box = $('#order-detail'); box.classList.remove('hidden');
-  box.replaceChildren(el('div', { class: 'row', style: 'justify-content:space-between' }, el('h3', {}, `${o.item.name} · ${o.amount.formatted} ${o.amount.symbol}`), el('button', { class: 'btn secondary small', type: 'button', onclick: () => showOrder(id, true) }, 'Check status now')),
+  fill(box, el('div', { class: 'row', style: 'justify-content:space-between' }, el('h3', {}, `${o.item.name} · ${o.amount.formatted} ${o.amount.symbol}`), el('button', { class: 'btn secondary small', type: 'button', onclick: () => showOrder(id, true) }, 'Check status now')),
     el('p', {}, el('span', { class: `pill ${statusTone(o.status)}` }, STATUS_LABEL[o.status] || o.status), ' ', o.statusNote || ''),
     o.extraPayment ? el('p', { class: 'notice err' }, 'More than one deposit settled for this order. Refund the extra amount to the buyer from your payout wallet.') : null,
     el('p', { class: 'small muted' }, `Payout: ${o.amount.symbol} on ${o.amount.chain} → `, el('span', { class: 'mono' }, o.recipient)),
@@ -92,13 +92,13 @@ async function showOrder(id, refresh = false) {
 }
 
 function renderAiStatus() {
-  $('#ai-status').replaceChildren(nearAi.configured ? el('p', { class: 'notice ok' }, `NEAR AI Cloud is configured (model ${nearAi.model}).`)
+  fill($('#ai-status'), nearAi.configured ? el('p', { class: 'notice ok' }, `NEAR AI Cloud is configured (model ${nearAi.model}).`)
     : el('p', { class: 'notice warn' }, 'NEAR AI Cloud isn\'t configured on this server (NEAR_AI_API_KEY is unset). Drafting is unavailable. Ferry won\'t invent a draft or switch to another AI provider. Everything else works without it.'));
   $('#ai-go').disabled = !nearAi.configured;
 }
 async function loadDrafts() {
   const { drafts } = await api('/api/merchant/ai/drafts');
-  $('#ai-drafts').replaceChildren(...(drafts.length ? drafts.map((d) => el('div', { class: 'row', style: 'justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 0' },
+  fill($('#ai-drafts'), ...(drafts.length ? drafts.map((d) => el('div', { class: 'row', style: 'justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 0' },
     el('div', {}, el('b', {}, d.brief.slice(0, 60)), el('div', { class: 'small muted' }, `${fmtTime(d.createdAt)} · ${d.model}`)),
     el('div', { class: 'row' }, el('span', { class: `pill ${d.status === 'approved' ? 'ok' : d.status === 'pending' ? 'warn' : 'bad'}` }, d.status), d.status === 'pending' ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => review(d) }, 'Review') : null))) : [el('p', { class: 'muted small' }, 'No drafts yet.')]));
 }
@@ -115,7 +115,7 @@ function review(d) {
   const assetName = (id) => { const a = assets.find((t) => t.assetId === id); return a ? `${a.symbol} · ${a.blockchain}` : id; };
   const prods = x.productCopy.map((pc, i) => el('div', { class: 'card', style: 'padding:14px' }, el('label', { style: 'display:flex;gap:8px;margin:0' }, el('input', { type: 'checkbox', name: 'f', value: `product:${i}`, style: 'width:auto;min-height:0' }), `Create product: ${pc.name}`), el('p', { class: 'small muted' }, pc.description),
     el('label', { for: `pp-${i}` }, `Your price (${me.payout ? me.payout.symbol : 'set payout first'}). The AI doesn't set prices.`), el('input', { id: `pp-${i}`, 'data-i': i, inputmode: 'decimal', placeholder: 'required if selected' })));
-  box.replaceChildren(el('h3', {}, 'Review the AI draft'), el('p', { class: 'small muted' }, 'Choose the fields to apply. Ferry has already checked this draft against a fixed schema and the live asset list. Your payout address and prices stay under your control.'),
+  fill(box, el('h3', {}, 'Review the AI draft'), el('p', { class: 'small muted' }, 'Choose the fields to apply. Ferry has already checked this draft against a fixed schema and the live asset list. Your payout address and prices stay under your control.'),
     el('div', { class: 'diff' }, el('div', { class: 'h' }, 'Field'), el('div', { class: 'h oldh' }, 'Current'), el('div', { class: 'h' }, 'Proposed'),
       row('tagline', 'Tagline', p.tagline, x.tagline), row('about', 'About', p.about, x.about), row('buttonLabel', 'Button label', p.buttonLabel, x.buttonLabel), row('accent', 'Accent', p.accent, x.accent),
       row('faq', 'FAQ', (p.faq || []).map((f) => f.q).join(' · '), x.faq.map((f) => f.q).join(' · ')),
@@ -144,7 +144,7 @@ $$('.tabs button').forEach((b) => b.addEventListener('click', () => {
 }));
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  try { await api('/api/auth/login', { method: 'POST', body: { accessKey: $('#key').value.trim() } }); $('#key').value = ''; boot(); }
+  try { await api('/api/auth/login', { method: 'POST', body: { accessKey: (($('#key').value.match(/fk_[A-Za-z0-9_-]{20,60}/) || [])[0]) || $('#key').value.trim() } }); $('#key').value = ''; boot(); }
   catch (err) { msg('#login-msg', err.message, 'err'); }
 });
 $('#logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST', body: {} }); location.reload(); });

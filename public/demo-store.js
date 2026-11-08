@@ -1,6 +1,6 @@
-import { $, el, api } from './common.js';
+import { $, el, api, fill } from './common.js';
 async function render(ids) {
-  const grid = $('#demo-grid'); grid.replaceChildren();
+  const grid = $('#demo-grid'); fill(grid);
   for (const id of ids) {
     try {
       const p = await api(`/api/public/products/${encodeURIComponent(id)}`);
