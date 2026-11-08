@@ -75,6 +75,7 @@ const LANE_TONE = { paid: 'ok', processing: 'warn', attention: 'bad', open: 'war
 const EVENT_LABEL = { created: 'Order created', quoted: 'Quote stored', remote_status: 'Provider status changed', status: 'Stored order status changed', extra_payment: 'Second settlement recorded', resolution_note: 'Resolution note saved', ai_narrative: 'NEAR AI narrative stored for review' };
 function eventLine(ev) {
   const d = ev.detail || {};
+  if (ev.kind === 'ai_narrative' && d.narrative?.withheld) return `${fmtTime(ev.at)} · NEAR AI reply kept on record, not shown`;
   const change = d.from && d.to ? ` ${d.from} → ${d.to}` : d.to ? ` → ${d.to}` : d.quoteId ? ` ${d.quoteId}` : '';
   return `${fmtTime(ev.at)} · ${EVENT_LABEL[ev.kind] || ev.kind}${change}`;
 }
@@ -148,9 +149,9 @@ async function showOrder(id, refresh = false) {
   });
   const noteList = (o.notes || []).map((n) => el('li', {}, el('span', { class: 'small muted' }, fmtTime(n.at)), ' ', n.body));
   const narratives = (o.narratives || []).map((n) => el('article', { class: 'quote-card' },
-    el('p', { class: 'kicker' }, 'NEAR AI narrative — not a payment decision'),
+    el('p', { class: 'kicker' }, n.status === 'stored' ? 'Ferry sentences. NEAR AI selected them. Not a payment decision.' : 'Not shown as a validated explanation'),
     el('p', { class: 'small muted' }, `${fmtTime(n.at)} · ${n.model || 'model unknown'} · evidence ${n.factsDigest || 'unknown'}`),
-    n.status === 'stored' && n.narrative ? el('div', {}, el('p', {}, n.narrative.summary), el('p', { class: 'small' }, el('b', {}, 'Review step: '), n.narrative.suggestedReviewStep), el('div', { class: 'row' }, copyButton(n.narrative.suggestedReviewStep)), el('p', { class: 'hint' }, 'Cited ', n.narrative.evidenceCited.join(', '), '. Copy only. Ferry did not run this step.')) : el('p', { class: 'notice err' }, `This response failed validation and was not shown. ${(n.errors || []).join(' ')}`)));
+    n.status === 'stored' && n.narrative ? el('div', {}, el('p', {}, n.narrative.summary), el('p', { class: 'small' }, el('b', {}, 'Review step: '), n.narrative.suggestedReviewStep), el('div', { class: 'row' }, copyButton(n.narrative.suggestedReviewStep)), el('p', { class: 'hint' }, 'Ferry wrote these sentences from stored evidence. NEAR AI only chose which ones. It did not run the step.')) : el('p', { class: 'notice err' }, (n.errors || ['This reply is not shown.']).join(' '))));
   fill(box,
     el('div', { class: 'row', style: 'justify-content:space-between' }, el('h3', {}, `${o.item.name} · ${o.amount.formatted} ${o.amount.symbol}`), el('button', { class: 'btn secondary small', type: 'button', onclick: () => showOrder(id, true) }, 'Refresh provider status')),
     el('p', {}, el('span', { class: `pill ${LANE_TONE[d.lane] || 'warn'}` }, LANE_LABEL[d.lane] || d.lane), ' ', el('span', { class: `pill ${statusTone(o.status)}` }, STATUS_LABEL[o.status] || o.status)),
@@ -171,7 +172,7 @@ async function showOrder(id, refresh = false) {
     noteList.length ? el('ul', {}, noteList) : el('p', { class: 'muted small' }, 'No resolution notes yet.'),
     el('form', { id: 'note-form' }, el('label', { for: 'note-body' }, 'Add a resolution note'), el('textarea', { id: 'note-body', maxlength: '2000', required: true }), el('div', { class: 'row', style: 'margin-top:12px' }, el('button', { class: 'btn secondary', type: 'submit' }, 'Save note')), el('p', { id: 'note-msg', class: 'hint', role: 'status' })),
     el('h3', {}, 'Optional explanation'),
-    el('p', { class: 'hint' }, 'NEAR AI may describe the evidence Ferry already stored and draft a next step. It cannot mark the order paid, change the price, send a refund, sign, or message anyone. If the key is missing or rejected, this stays blank.'),
+    el('p', { class: 'hint' }, 'NEAR AI can only pick claim ids and one next step from a list Ferry built for this order. Ferry writes the sentences. Free text is not shown. A rejected reply, or an older reply with a check mark, stays on record and is not shown as validated.'),
     narratives,
     el('div', { class: 'row' }, el('button', { class: 'btn secondary', type: 'button', id: 'explain-btn' }, 'Draft an evidence explanation')),
     el('p', { id: 'explain-msg', class: 'hint', role: 'status' }));

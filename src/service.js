@@ -6,6 +6,7 @@ import { validateAddress, canBePayoutChain } from './addresses.js';
 import { verifySuccess, deriveOrderStatus, BLOCKS_NEW_QUOTE } from './reconcile.js';
 import { REMOTE_STATUSES } from './oneclick.js';
 import { diagnoseOrder, caseFacts } from './diagnose.js';
+import { presentStoredNarrative, isServerNarrative } from './narrative-claims.js';
 import { toCsv, RECONCILE_HEADERS } from './csv.js';
 
 export class HttpError extends Error { constructor(status, message, code) { super(message); this.status = status; this.code = code; } }
@@ -141,10 +142,17 @@ export function createService({ db, cfg, oneClick, tokens, log = () => {} }) {
       createdAt: o.created_at, expiresAt: o.expires_at, updatedAt: o.updated_at, paidQuoteId: o.paid_quote_id, quotes: quoteRows.map(quoteView) };
     if (forMerchant) {
       const events = (await db.all('SELECT id, kind, detail, at FROM order_events WHERE order_id=? ORDER BY id', [o.id])).map(eventView);
-      v.events = events;
       v.diagnosis = diagnoseOrder(o, quoteRows);
       v.notes = events.filter((e) => e.kind === 'resolution_note').map((e) => ({ id: e.detail.noteId || `event:${e.id}`, body: typeof e.detail.body === 'string' ? e.detail.body : '', at: e.at }));
-      v.narratives = events.filter((e) => e.kind === 'ai_narrative').map((e) => ({ id: e.detail.narrativeId || `event:${e.id}`, status: e.detail.status || 'invalid', model: e.detail.model || null, at: e.at, factsDigest: e.detail.factsDigest || null, narrative: e.detail.status === 'stored' ? e.detail.narrative : null, errors: e.detail.errors || [], refreshFailed: !!e.detail.refreshFailed }));
+      v.narratives = events.filter((e) => e.kind === 'ai_narrative').map((e) => {
+        const shown = presentStoredNarrative(e.detail);
+        return { id: e.detail.narrativeId || `event:${e.id}`, status: shown.status, model: e.detail.model || null, at: e.at, factsDigest: e.detail.factsDigest || null, narrative: shown.narrative, errors: shown.errors, refreshFailed: !!e.detail.refreshFailed };
+      });
+      v.events = events.map((e) => {
+        if (e.kind !== 'ai_narrative' || isServerNarrative(e.detail?.narrative)) return e;
+        if (!e.detail?.narrative) return e;
+        return { ...e, detail: { ...e.detail, narrative: { withheld: true } } };
+      });
     }
     return v;
   }

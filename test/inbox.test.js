@@ -4,6 +4,7 @@ import { diagnoseOrder, compareDeposit } from '../src/diagnose.js';
 import { csvCell, toCsv } from '../src/csv.js';
 import { simulatedCases } from '../src/simulated.js';
 import { validateNarrative } from '../src/ai.js';
+import { buildAllowlist, presentStoredNarrative } from '../src/narrative-claims.js';
 
 const now = Date.parse('2026-11-08T12:00:00.000Z');
 const future = '2026-11-08T18:00:00.000Z';
@@ -64,14 +65,85 @@ test('stale and failed refreshes are not described as fresh', () => {
   assert.ok(stale.findings.some((f) => f.id === 'stale_status'));
 });
 
-test('narrative schema rejects actions, foreign evidence, and a silent refresh failure', () => {
-  const ids = ['order:ord_x', 'quote:qt_1'];
-  const good = { summary: 'The status refresh failed. Deposited amount is unknown.', evidenceCited: ['quote:qt_1'], unknowns: ['depositedAmount was not reported'], suggestedReviewStep: 'Review the stored quote. Do not send a refund.' };
-  assert.equal(validateNarrative(good, { evidenceIds: ids, refreshFailed: true }).ok, true);
-  assert.equal(validateNarrative({ ...good, executeRefund: true }, { evidenceIds: ids, refreshFailed: true }).ok, false);
-  assert.equal(validateNarrative({ ...good, evidenceCited: ['quote:forged'] }, { evidenceIds: ids, refreshFailed: true }).ok, false);
-  assert.equal(validateNarrative({ ...good, summary: 'All settled just now.' }, { evidenceIds: ids, refreshFailed: true }).ok, false);
-  assert.equal(validateNarrative({ ...good, summary: '<script>alert(1)</script>' }, { evidenceIds: ids, refreshFailed: true }).ok, false);
+test('the model may only select allowlist ids, and Ferry renders the sentences', () => {
+  const facts = {
+    orderId: 'ord_x',
+    destination: { displayAmount: '1', symbol: 'USDC', chain: 'near', baseUnits: '1000000', decimals: 6 },
+    quotes: [],
+    refresh: { failed: false, providerCalled: false },
+    storedStatus: 'open',
+  };
+  const allow = buildAllowlist(facts);
+  const attacks = [
+    { summary: '100 USDC', evidenceCited: ['order:ord_x'], unknowns: ['none'], suggestedReviewStep: 'Generate a new quote.' },
+    { summary: '1 million USDC', claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight' },
+    { summary: '1M', claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight' },
+    { claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight', suggestedReviewStep: 'No deposit was sent, funds may be lost' },
+    { claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight', summary: 'The status check errored. You could lose your money if you wait.' },
+    { claimIds: allow.mandatoryClaimIds, stepId: 'step:generate-quote' },
+    { claimIds: ['claim:display-amount'], stepId: 'step:nothing-in-flight' },
+  ];
+  for (const attack of attacks) {
+    const rejected = validateNarrative(attack, { allowlist: allow });
+    assert.equal(rejected.ok, false, JSON.stringify(attack));
+    assert.equal(rejected.value, null);
+  }
+  const ok = validateNarrative({ claimIds: allow.mandatoryClaimIds, stepId: 'step:nothing-in-flight' }, { allowlist: allow });
+  assert.equal(ok.ok, true, ok.errors.join(' '));
+  assert.equal(ok.value.narrativeVersion, 2);
+  assert.equal(ok.value.composedBy, 'ferry');
+  assert.equal(ok.value.selectedBy, 'near-ai');
+  assert.match(ok.value.summary, /1 USDC/);
+  assert.match(ok.value.summary, /1000000 base units/);
+  assert.match(ok.value.summary, /was not called/);
+  assert.doesNotMatch(`${ok.value.summary} ${ok.value.suggestedReviewStep}`, /100 USDC|1 million|\b1M\b|funds may be lost|lose your money|status check errored|Generate a new quote/);
+  assert.equal(ok.value.summary, ok.value.statements.map((s) => s.text).join(' '));
+});
+
+test('a failed refresh must be selected or the explanation is not shown', () => {
+  const allow = buildAllowlist({
+    orderId: 'ord_x',
+    destination: { displayAmount: '2', symbol: 'USDC', chain: 'near', baseUnits: '2000000', decimals: 6 },
+    quotes: [{ evidenceId: 'quote:qt_1', remoteStatus: 'PENDING_DEPOSIT', originSymbol: 'USDC', originChain: 'base', amountInDisplay: '2.025107', minAmountInDisplay: '2.004902', deadline: '2099-01-01T00:00:00.000Z', deadlinePassed: false, depositComparison: { relation: 'UNKNOWN' } }],
+    refresh: { failed: true, providerCalled: true },
+    storedStatus: 'awaiting_deposit',
+  });
+  assert.ok(allow.mandatoryClaimIds.includes('claim:refresh-failed'));
+  const omitted = validateNarrative({ claimIds: ['claim:display-amount'], stepId: 'step:save-note' }, { allowlist: allow });
+  assert.equal(omitted.ok, false);
+  assert.match(omitted.errors.join(' '), /refresh-failed/);
+  const ok = validateNarrative({ claimIds: allow.mandatoryClaimIds, stepId: 'step:read-again-later' }, { allowlist: allow });
+  assert.equal(ok.ok, true, ok.errors.join(' '));
+  assert.match(ok.value.summary, /not refreshed/);
+  assert.doesNotMatch(ok.value.summary, /funds may be lost/);
+});
+
+test('an open quote deadline is not rendered as lost funds or a failed read', () => {
+  const allow = buildAllowlist({
+    orderId: 'ord_x',
+    destination: { displayAmount: '2', symbol: 'USDC', chain: 'near', baseUnits: '2000000', decimals: 6 },
+    quotes: [{ evidenceId: 'quote:qt_1', remoteStatus: 'PENDING_DEPOSIT', originSymbol: 'USDC', originChain: 'base', amountInDisplay: '2.025107', minAmountInDisplay: '2.004902', deadline: '2099-01-01T00:00:00.000Z', deadlinePassed: false, depositComparison: { relation: 'UNKNOWN' } }],
+    refresh: { failed: false, providerCalled: true },
+    storedStatus: 'awaiting_deposit',
+  });
+  const prose = [...allow.claims, ...allow.steps].map((item) => item.text).join(' ');
+  assert.doesNotMatch(prose, /funds may be lost|lose your money|status check errored|failed status read|Generate a new quote|100 USDC|1 million|\b1M\b/);
+  assert.match(prose, /has not passed/);
+  const ok = validateNarrative({ claimIds: allow.mandatoryClaimIds, stepId: 'step:wait' }, { allowlist: allow });
+  assert.equal(ok.ok, true, ok.errors.join(' '));
+  assert.equal(ok.value.claimsChecked, undefined);
+});
+
+test('legacy free text is withheld even when an old check mark is set', () => {
+  const unsafe = { status: 'stored', narrativeId: 'nar_T03XaJUtujSB', narrative: { claimsChecked: true, summary: '100 USDC. 1 million USDC. The status check errored. You could lose your money if you wait.', evidenceCited: ['order:ord_x'], unknowns: ['none'], suggestedReviewStep: 'Generate a new quote.' } };
+  const shown = presentStoredNarrative(unsafe);
+  assert.equal(shown.status, 'withheld');
+  assert.equal(shown.narrative, null);
+  assert.match(shown.errors.join(' '), /check mark/);
+  assert.equal(unsafe.narrative.summary.includes('100 USDC'), true);
+  const older = presentStoredNarrative({ status: 'stored', narrative: { summary: '1,000,000 USDC on NEAR.', evidenceCited: ['order:ord_x'], suggestedReviewStep: 'Generate a quote.' } });
+  assert.equal(older.status, 'withheld');
+  assert.equal(older.narrative, null);
 });
 
 test('CSV prefixes formula cells and writes UNKNOWN rather than a blank zero', () => {

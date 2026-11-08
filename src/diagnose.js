@@ -211,9 +211,21 @@ export function caseFacts({ order, quotes = [], events = [], diagnosis, refreshA
       depositAddress: q.deposit_address,
       depositMemo: q.deposit_memo || null,
       transactions: txs,
+      originDecimals: Number(q.origin_decimals),
+      destinationDecimals: Number(order.dest_decimals),
+      amountInDisplay: formatUnits(q.amount_in, Number(q.origin_decimals)),
+      minAmountInDisplay: formatUnits(q.min_amount_in, Number(q.origin_decimals)),
+      depositedAmountDisplay: deposited ? formatUnits(deposited, Number(q.origin_decimals)) : null,
+      amountOutDisplay: baseOrNull(detail.amountOut) ? formatUnits(detail.amountOut, Number(order.dest_decimals)) : null,
+      refundedAmountDisplay: baseOrNull(detail.refundedAmount) ? formatUnits(detail.refundedAmount, Number(q.origin_decimals)) : null,
+      deadlinePassed: Number.isFinite(Date.parse(q.deadline)) && Date.parse(q.deadline) <= Date.now(),
     };
   });
   const failed = quoteFacts.filter((q) => q.lastPollError).map((q) => ({ evidenceId: q.evidenceId, error: q.lastPollError }));
+  const providerCalled = quotes.length > 0 && refreshAttempted;
+  const refreshFailed = providerCalled && failed.length > 0;
+  const decimals = Number(order.dest_decimals);
+  const displayAmount = formatUnits(order.amount_out_base, decimals);
   const facts = {
     kind: 'ferry_order_evidence',
     orderId: order.id,
@@ -221,16 +233,26 @@ export function caseFacts({ order, quotes = [], events = [], diagnosis, refreshA
     storedStatus: order.status,
     lane: diagnosis.lane,
     extraPayment: diagnosis.extraPayment,
-    destination: { amountBase: order.amount_out_base, symbol: order.dest_symbol, chain: order.dest_chain, assetId: order.dest_asset_id },
-    exactOutput: 'Destination base units are conditional on a successful eligible execution. Not fiat. Not unconditional.',
-    invoiceExpiresAt: order.expires_at,
+    destination: {
+      displayAmount, symbol: order.dest_symbol, chain: order.dest_chain, assetId: order.dest_asset_id,
+      baseUnits: order.amount_out_base, decimals,
+      baseUnitsNote: 'Integer smallest units. Not the display amount unless decimals are 0.',
+    },
+    exactOutput: 'The display amount is conditional on a successful eligible execution. Not fiat. Not unconditional.',
+    localInvoiceExpiresAt: order.expires_at,
+    localInvoiceNote: quotes.length ? 'Local invoice time. Separate from any quote deadline.' : 'Local invoice time only. No quote is stored, so there is no quote deadline and no deposit.',
     rulesLabel: diagnosis.label,
     findings: diagnosis.findings.map((f) => ({ id: f.id, severity: f.severity, title: f.title, detail: f.detail, evidenceIds: f.evidenceIds })),
     unknowns: diagnosis.unknowns,
-    freshness: diagnosis.freshness.state,
-    refresh: { attempted: refreshAttempted, failedQuotes: failed },
+    freshness: quotes.length === 0 ? 'no_quote' : diagnosis.freshness.state,
+    refresh: {
+      providerCalled, failed: refreshFailed, failedQuotes: failed,
+      detail: quotes.length === 0
+        ? 'No quote is stored, so the provider was not called. This is not a failed refresh.'
+        : (refreshFailed ? 'The last provider status read failed.' : (providerCalled ? 'The provider was called for this explanation.' : 'The provider was not called for this explanation.')),
+    },
     quotes: quoteFacts,
     evidenceIds: [...evidenceIds].sort(),
   };
-  return { facts: stable(facts), evidenceIds: [...evidenceIds].sort(), refreshFailed: failed.length > 0 };
+  return { facts: stable(facts), evidenceIds: [...evidenceIds].sort(), refreshFailed };
 }

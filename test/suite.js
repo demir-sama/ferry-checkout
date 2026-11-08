@@ -362,36 +362,122 @@ export function defineSuite(label, getOpts) {
       const bad = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
       assert.equal(bad.status, 200, JSON.stringify(bad.data));
       assert.equal(bad.data.explanation.status, 'invalid');
-      assert.match(bad.data.explanation.errors.join(' '), /refresh/);
+      assert.equal(bad.data.explanation.narrative, null);
+      assert.match(bad.data.explanation.errors.join(' '), /claimIds|allowlist|unexpected/);
       assert.equal(bad.data.unchanged, true);
       assert.equal((await t.req(`/api/merchant/orders/${id}`)).data.status, 'awaiting_deposit');
       const sent = JSON.parse(fake.calls.filter((c) => c.path === '/v1/chat/completions').at(-1).body);
       assert.equal(sent.response_format.json_schema.name, 'ferry_case_narrative');
       assert.equal(sent.response_format.json_schema.strict, true);
+      assert.equal(sent.response_format.json_schema.schema.additionalProperties, false);
+      assert.deepEqual(sent.response_format.json_schema.schema.required, ['claimIds', 'stepId']);
       assert.equal(sent.tools, undefined);
       assert.equal(sent.chat_template_kwargs.enable_thinking, false);
       assert.doesNotMatch(sent.messages[1].content, /ferry-sample\.near/);
       assert.doesNotMatch(JSON.stringify(sent.messages), new RegExp(EVM));
-      fake.state.aiNarrative = { ...fake.state.aiNarrative, summary: 'Status could not be refreshed. Review the stored quote only.', executeRefund: true, setStatus: 'paid' };
+      const menu = JSON.parse(sent.messages[1].content);
+      assert.ok(menu.mandatoryClaimIds.includes('claim:refresh-failed'));
+      fake.state.aiNarrative = { claimIds: ['claim:display-amount', 'claim:refresh-failed'], stepId: 'step:read-again-later', executeRefund: true, setStatus: 'paid' };
       const acted = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
       assert.equal(acted.data.explanation.status, 'invalid');
-      assert.match(acted.data.explanation.errors.join(' '), /executeRefund|forbidden|unexpected/);
+      assert.match(acted.data.explanation.errors.join(' '), /executeRefund|unexpected/);
       assert.equal((await t.req(`/api/merchant/orders/${id}`)).data.status, 'awaiting_deposit');
-      fake.state.aiNarrative = { summary: 'Status could not be refreshed.', evidenceCited: ['quote:forged'], unknowns: ['deposited amount unknown'], suggestedReviewStep: 'Read the stored quote. Do not send a refund from here.' };
+      fake.state.aiNarrative = { claimIds: ['claim:forged'], stepId: 'step:save-note' };
       const forged = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
       assert.equal(forged.data.explanation.status, 'invalid');
-      assert.match(forged.data.explanation.errors.join(' '), /evidence/);
-      fake.state.aiNarrative = { summary: 'The status refresh failed, so this is not a fresh confirmation. Deposited amount is unknown.', evidenceCited: [evidenceId, `order:${id}`], unknowns: ['depositedAmount was not reported'], suggestedReviewStep: 'Review the stored quote and do not send a refund from Ferry.' };
+      assert.match(forged.data.explanation.errors.join(' '), /allowlist/);
+      fake.state.aiNarrative = { claimIds: ['claim:display-amount'], stepId: 'step:save-note' };
+      const omitted = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+      assert.equal(omitted.data.explanation.status, 'invalid');
+      assert.match(omitted.data.explanation.errors.join(' '), /refresh-failed/);
+      assert.equal(omitted.data.explanation.narrative, null);
+      fake.state.aiNarrative = { claimIds: menu.mandatoryClaimIds, stepId: 'step:read-again-later' };
       const ok = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
       assert.equal(ok.data.explanation.status, 'stored', JSON.stringify(ok.data));
       assert.equal(ok.data.explanation.authority, 'none');
+      assert.equal(ok.data.explanation.composedBy, 'ferry');
+      assert.equal(ok.data.explanation.selectedBy, 'near-ai');
       assert.equal(ok.data.unchanged, true);
+      assert.match(ok.data.explanation.narrative.summary, /not refreshed/);
+      assert.doesNotMatch(ok.data.explanation.narrative.summary, /Everything is confirmed|executeRefund/);
       const after = await t.req(`/api/merchant/orders/${id}`);
       assert.equal(after.data.status, 'awaiting_deposit');
       assert.equal(after.data.amount.base, '2000000');
       assert.equal(after.data.recipient, 'ferry-sample.near');
       assert.equal(after.data.narratives.at(-1).narrative.summary.includes('refresh'), true);
       assert.equal((await t.req('/api/merchant')).data.merchant.payout.recipient, 'ferry-sample.near');
+    } finally { await t.close(); }
+  });
+
+  test(`[${label}] a no-quote explanation cannot repeat the live false claims, and older text stays stored but hidden`, async () => {
+    const fake = fakeOneClick();
+    const t = await boot({ aiKey: 'sample-key-not-real', fake });
+    try {
+      await merchantWithProduct(t, '1');
+      const inv = await t.req('/api/merchant/orders', { method: 'POST', body: { title: 'One USDC', description: '', amount: '1' } });
+      assert.equal(inv.status, 201, JSON.stringify(inv.data));
+      const id = inv.data.orderId;
+      assert.equal((await t.req(`/api/merchant/orders/${id}/notes`, { method: 'POST', body: { body: 'QA note four' } })).status, 201);
+      assert.equal((await t.req(`/api/merchant/orders/${id}/notes`, { method: 'POST', body: { body: 'QA note five' } })).status, 201);
+      const before = await t.req(`/api/merchant/orders/${id}`);
+      assert.equal(before.data.amount.base, '1000000');
+      assert.equal(before.data.amount.formatted, '1');
+      assert.equal(before.data.status, 'open');
+      assert.equal(before.data.quotes.length, 0);
+      assert.equal(before.data.diagnosis.freshness.state, 'no_quote');
+      const evidenceIds = [`order:${id}`, ...before.data.events.map((e) => `event:${e.id}`)];
+      assert.ok(evidenceIds.length >= 3);
+      const attacks = [
+        { summary: 'The order is for 1,000,000 USDC on NEAR. A refresh was attempted but failed to produce quotes; the status was not rechecked.', evidenceCited: evidenceIds.slice(0, 12), unknowns: ['refresh attempted but failed to produce quotes'], suggestedReviewStep: 'Generate a quote. Funds may be lost after the quote deadline.' },
+        { claimIds: ['claim:display-amount', 'claim:no-quote', 'claim:provider-not-called'], stepId: 'step:nothing-in-flight', summary: '100 USDC. 1 million USDC. 1M.' },
+        { claimIds: ['claim:display-amount', 'claim:no-quote', 'claim:provider-not-called'], stepId: 'step:nothing-in-flight', suggestedReviewStep: 'No deposit was sent, funds may be lost' },
+        { claimIds: ['claim:display-amount', 'claim:no-quote', 'claim:provider-not-called'], stepId: 'step:nothing-in-flight', summary: 'The status check errored. You could lose your money if you wait.' },
+        { claimIds: ['claim:display-amount', 'claim:no-quote', 'claim:provider-not-called'], stepId: 'step:generate-quote' },
+      ];
+      const statusCalls = fake.calls.filter((c) => c.path === '/v0/status').length;
+      for (const attack of attacks) {
+        fake.state.aiNarrative = attack;
+        const bad = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+        assert.equal(bad.status, 200, JSON.stringify(bad.data));
+        assert.equal(bad.data.explanation.status, 'invalid', JSON.stringify(attack));
+        assert.equal(bad.data.explanation.narrative, null);
+        assert.equal(bad.data.explanation.accepted, false);
+        assert.equal(bad.data.unchanged, true);
+      }
+      assert.equal(fake.calls.filter((c) => c.path === '/v0/status').length, statusCalls);
+      const sent = JSON.parse(fake.calls.filter((c) => c.path === '/v1/chat/completions').at(-1).body);
+      const menu = JSON.parse(sent.messages[1].content);
+      assert.ok(menu.claims.some((c) => c.id === 'claim:display-amount' && c.text.includes('1 USDC') && c.text.includes('1000000 base units')));
+      assert.ok(menu.claims.some((c) => c.id === 'claim:provider-not-called' && /not called/i.test(c.text)));
+      assert.equal(menu.steps.some((s) => s.id === 'step:generate-quote'), false);
+      assert.doesNotMatch(JSON.stringify(menu), /ferry-sample\.near/);
+      const hidden = await t.req(`/api/merchant/orders/${id}`);
+      assert.equal(hidden.data.status, 'open');
+      assert.equal(hidden.data.amount.formatted, '1');
+      assert.equal(hidden.data.narratives.at(-1).narrative, null);
+      assert.doesNotMatch(JSON.stringify(hidden.data), /1,000,000|100 USDC|1 million|1M|lose your money|funds may be lost|status check errored|Generate a quote/);
+      fake.state.aiNarrative = { claimIds: menu.mandatoryClaimIds, stepId: 'step:nothing-in-flight' };
+      const ok = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+      assert.equal(ok.data.explanation.status, 'stored', JSON.stringify(ok.data));
+      assert.equal(ok.data.explanation.narrative.narrativeVersion, 2);
+      assert.equal(ok.data.explanation.narrative.composedBy, 'ferry');
+      assert.equal(ok.data.explanation.narrative.selectedBy, 'near-ai');
+      assert.equal(ok.data.explanation.accepted, true);
+      assert.match(ok.data.explanation.narrative.summary, /1 USDC/);
+      assert.match(ok.data.explanation.narrative.summary, /was not called/);
+      assert.doesNotMatch(`${ok.data.explanation.narrative.summary} ${ok.data.explanation.narrative.suggestedReviewStep}`, /100 USDC|1 million|\b1M\b|lose your money|funds may be lost|status check errored|Generate a quote/);
+      await t.rt.db.run('INSERT INTO order_events(order_id, kind, detail, at) VALUES (?,?,?,?)', [id, 'ai_narrative', JSON.stringify({ narrativeId: 'nar_legacy', status: 'stored', narrative: { claimsChecked: true, summary: '100 USDC. 1 million USDC. 1M. The status check errored. You could lose your money if you wait. No deposit was sent, funds may be lost. Generate a new quote.', evidenceCited: [`order:${id}`], unknowns: ['none'], suggestedReviewStep: 'Generate a new quote.' } }), new Date().toISOString()]);
+      const after = await t.req(`/api/merchant/orders/${id}`);
+      const legacy = after.data.narratives.find((n) => n.id === 'nar_legacy');
+      assert.equal(legacy.status, 'withheld');
+      assert.equal(legacy.narrative, null);
+      assert.match(legacy.errors.join(' '), /check mark/);
+      assert.doesNotMatch(JSON.stringify(after.data), /100 USDC|1 million|lose your money|funds may be lost|status check errored|Generate a new quote/);
+      const raw = await t.rt.db.get("SELECT detail FROM order_events WHERE order_id=? AND kind='ai_narrative' ORDER BY id DESC LIMIT 1", [id]);
+      assert.match(String(raw.detail), /100 USDC/);
+      assert.match(String(raw.detail), /claimsChecked/);
+      assert.equal(after.data.status, 'open');
+      assert.equal(after.data.amount.base, '1000000');
     } finally { await t.close(); }
   });
 
