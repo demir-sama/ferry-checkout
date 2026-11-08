@@ -72,7 +72,7 @@ export function createApp({ db, cfg, service, assistant, ai, tokens, oneClick, l
     if (!p.startsWith('/api/')) return send(res, 404, { error: 'Not found' });
 
     // ---------- public api ----------
-    if (m === 'GET' && p === '/api/health') return send(res, 200, { ok: true, time: now(), storage: db.kind, nearAi: { configured: ai.configured, model: ai.model }, oneClick: { authenticated: oneClick.authenticated }, devMode: cfg.devMode });
+    if (m === 'GET' && p === '/api/health') return send(res, 200, { ok: true, time: now(), storage: db.kind, nearAi: await assistant.status(), oneClick: { authenticated: oneClick.authenticated }, devMode: cfg.devMode });
     if (m === 'GET' && p === '/api/cron/poll') {
       // Scheduled sweep (Vercel Cron sends "Authorization: Bearer $CRON_SECRET").
       if (!cfg.cronSecret || req.headers.authorization !== `Bearer ${cfg.cronSecret}`) throw new HttpError(401, 'Unauthorized');
@@ -136,7 +136,7 @@ export function createApp({ db, cfg, service, assistant, ai, tokens, oneClick, l
       const merchantId = await merchantFromSession(req);
       if (!merchantId) throw new HttpError(401, 'Sign in required');
       if (m !== 'GET' && !sameOrigin(req)) throw new HttpError(403, 'Cross-origin request refused');
-      if (m === 'GET' && p === '/api/merchant') return send(res, 200, { merchant: service.merchantView(await service.getMerchant(merchantId)), nearAi: { configured: ai.configured, model: ai.model } });
+      if (m === 'GET' && p === '/api/merchant') return send(res, 200, { merchant: service.merchantView(await service.getMerchant(merchantId)), nearAi: await assistant.status() });
       if (m === 'PUT' && p === '/api/merchant') return send(res, 200, { merchant: await service.updateSettings(merchantId, await readJson(req)) });
       if (m === 'GET' && p === '/api/merchant/products') return send(res, 200, { products: await service.listProducts(merchantId) });
       if (m === 'POST' && p === '/api/merchant/products') return send(res, 201, { product: await service.createProduct(merchantId, await readJson(req)) });

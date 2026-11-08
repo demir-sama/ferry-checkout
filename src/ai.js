@@ -88,7 +88,7 @@ export function createNearAi({ baseUrl, apiKey, model, maxTokens = 1500, fetchIm
       const text = await res.text();
       if (!res.ok) {
         const hint = res.status === 402 ? ' (credits required)' : res.status === 401 ? ' (API key rejected)' : res.status === 429 ? ' (rate limited)' : res.status >= 500 ? ' (model temporarily unavailable)' : '';
-        throw new HttpError(502, `NEAR AI returned HTTP ${res.status}${hint}. No draft was generated.`, 'NEAR_AI_ERROR');
+        throw new HttpError(502, `NEAR AI returned HTTP ${res.status}${hint}. No draft was generated.`, res.status === 401 || res.status === 403 ? 'NEAR_AI_AUTH' : 'NEAR_AI_ERROR');
       }
       let parsed; try { parsed = JSON.parse(text); } catch { throw new HttpError(502, 'NEAR AI response was not JSON', 'NEAR_AI_ERROR'); }
       const choice = parsed?.choices?.[0] || {};
@@ -113,13 +113,34 @@ export function createAssistant({ db, ai, tokens, service }) {
     const live = (await tokens.list()).list;
     const menu = live.filter((t) => ['USDC', 'USDT', 'ETH', 'BTC', 'SOL', 'wNEAR', 'NEAR', 'ZEC', 'TON', 'XRP', 'DOGE'].includes(t.symbol)).slice(0, 60)
       .map((t) => `${t.assetId} | ${t.symbol} | ${t.blockchain}`).join('\n');
-    const out = await ai.draft({ brief: b, storeName: m.name, assetMenu: menu });
+    let out;
+    try { out = await ai.draft({ brief: b, storeName: m.name, assetMenu: menu }); }
+    catch (e) { if (e.code === 'NEAR_AI_AUTH') await setStatus('auth_failed'); throw e; }
+    await setStatus('verified'); // only after an actual successful provider response
     const validation = validateDraft(out.draft, { liveAssetIds: new Set(live.map((t) => t.assetId)) });
     const id = randomId('drf', 9);
     await db.run('INSERT INTO ai_drafts(id,merchant_id,brief,model,draft,validation,status,created_at) VALUES (?,?,?,?,?,?,?,?)',
       [id, merchantId, b, String(out.model).slice(0, 120), JSON.stringify(validation.ok ? validation.value : { rejectedRaw: out.rawContent }),
         JSON.stringify({ ok: validation.ok, errors: validation.errors.slice(0, 20), responseId: out.responseId, usage: out.usage || null }), validation.ok ? 'pending' : 'invalid', now()]);
     return view(await db.get('SELECT * FROM ai_drafts WHERE id=?', [id]));
+  }
+  // Connection state is only ever derived from real provider responses; holding a key proves nothing.
+  const LABELS = {
+    unset: 'Not configured: NEAR_AI_API_KEY is unset. Drafting is unavailable.',
+    unverified: 'Key set — connection not verified. No successful NEAR AI response yet.',
+    verified: 'Connected: the last NEAR AI request succeeded.',
+    auth_failed: 'NEAR AI rejected the API key (HTTP 401/403) on the last attempt. Drafting will fail until the operator fixes the key.',
+  };
+  async function setStatus(state) {
+    await db.run('INSERT INTO kv(k,v,updated_at) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated_at=excluded.updated_at', ['near_ai_status', state, now()]);
+  }
+  async function status() {
+    let state = 'unset', checkedAt = null;
+    if (ai.configured) {
+      const row = await db.get('SELECT v, updated_at FROM kv WHERE k = ?', ['near_ai_status']);
+      state = row && LABELS[row.v] && row.v !== 'unset' ? row.v : 'unverified'; checkedAt = row ? row.updated_at : null;
+    }
+    return { configured: ai.configured, status: state, label: LABELS[state], checkedAt, model: ai.model };
   }
   const list = async (merchantId) => (await db.all('SELECT * FROM ai_drafts WHERE merchant_id=? ORDER BY created_at DESC LIMIT 20', [merchantId])).map(view);
   // Merchant approves selected fields. Product copy becomes products only with merchant-entered prices. All-or-nothing.
@@ -159,5 +180,5 @@ export function createAssistant({ db, ai, tokens, service }) {
     const r = await db.run('UPDATE ai_drafts SET status=?, decided_at=? WHERE id=? AND merchant_id=? AND status=?', ['rejected', now(), draftId, merchantId, 'pending']);
     if (!r.changes) throw new HttpError(404, 'Pending draft not found');
   }
-  return { generate, list, approve, reject };
+  return { status, generate, list, approve, reject };
 }

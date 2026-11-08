@@ -28,7 +28,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`\n[dev] Created a SAMPLE merchant for local development. Access key (shown once):\n      ${accessKey}\n`);
   }
   http.createServer(rt.handler).listen(cfg.port, cfg.host, () => {
-    console.log(`Ferry listening on http://${cfg.host}:${cfg.port}  (storage ${db.kind}; NEAR AI ${rt.ai.configured ? 'configured' : 'NOT configured'}; 1Click ${rt.oneClick.authenticated ? 'partner JWT' : 'unauthenticated'})`);
+    console.log(`Ferry listening on http://${cfg.host}:${cfg.port}  (storage ${db.kind}; NEAR AI ${rt.ai.configured ? 'key set, connection not verified' : 'NOT configured'}; 1Click ${rt.oneClick.authenticated ? 'partner JWT' : 'unauthenticated'})`);
   });
   const tick = async () => { try { await service.pollActive(); } catch (e) { console.error('poller', e.message); } setTimeout(tick, cfg.pollIntervalMs).unref(); };
   setTimeout(tick, 2000).unref();

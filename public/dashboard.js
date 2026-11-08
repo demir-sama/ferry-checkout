@@ -92,8 +92,9 @@ async function showOrder(id, refresh = false) {
 }
 
 function renderAiStatus() {
-  fill($('#ai-status'), nearAi.configured ? el('p', { class: 'notice ok' }, `NEAR AI Cloud is configured (model ${nearAi.model}).`)
-    : el('p', { class: 'notice warn' }, 'NEAR AI Cloud isn\'t configured on this server (NEAR_AI_API_KEY is unset). Drafting is unavailable. Ferry won\'t invent a draft or switch to another AI provider. Everything else works without it.'));
+  const tone = { verified: 'ok', unverified: 'warn', auth_failed: 'err', unset: 'warn' }[nearAi.status] || 'warn';
+  const extra = nearAi.status === 'unset' ? ' Ferry won\'t invent a draft or switch to another AI provider. Everything else works without it.' : '';
+  fill($('#ai-status'), el('p', { class: `notice ${tone}` }, `NEAR AI Cloud (${nearAi.model}): ${nearAi.label}${nearAi.checkedAt ? ` Last checked ${fmtTime(nearAi.checkedAt)}.` : ''}${extra}`));
   $('#ai-go').disabled = !nearAi.configured;
 }
 async function loadDrafts() {
@@ -106,6 +107,7 @@ $('#ai-form').addEventListener('submit', async (e) => {
   e.preventDefault(); $('#ai-go').disabled = true; msg('#ai-msg', 'Asking NEAR AI Cloud…');
   try { const { draft } = await api('/api/merchant/ai/drafts', { method: 'POST', body: { brief: $('#ai-brief').value } }); const u = draft.validation.usage; msg('#ai-msg', draft.validation.ok ? `Draft ready for review${u?.completionTokens ? ` (${u.promptTokens} + ${u.completionTokens} tokens)` : ''}.` : `The draft failed validation and was not applied: ${draft.validation.errors.join('; ')}`, draft.validation.ok ? 'ok' : 'err'); loadDrafts(); if (draft.validation.ok) review(draft); }
   catch (err) { msg('#ai-msg', err.message, 'err'); }
+  try { nearAi = (await api('/api/merchant')).nearAi; renderAiStatus(); } catch {}
   $('#ai-go').disabled = !nearAi.configured;
 });
 function review(d) {

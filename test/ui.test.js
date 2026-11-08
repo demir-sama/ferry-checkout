@@ -3,10 +3,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { setTimeout as sleep } from 'node:timers/promises';
+
+// Page timers are tracked and cleared after each test so no open handles remain (no force-exit needed).
+const native = { setTimeout, clearTimeout, setInterval, clearInterval };
+const pending = new Set();
+globalThis.setTimeout = (fn, ms, ...a) => { const h = native.setTimeout(() => { pending.delete(h); fn(...a); }, ms); pending.add(h); return h; };
+globalThis.setInterval = (fn, ms, ...a) => { const h = native.setInterval(fn, ms, ...a); pending.add(h); return h; };
+globalThis.clearTimeout = (h) => { pending.delete(h); native.clearTimeout(h); };
+globalThis.clearInterval = (h) => { pending.delete(h); native.clearInterval(h); };
+let current = null;
+test.afterEach(() => { for (const h of pending) { native.clearTimeout(h); native.clearInterval(h); } pending.clear(); if (current) { current.window.close(); current = null; } });
 
 function browser(htmlFile, url, routes) {
   const dom = new JSDOM(readFileSync(new URL(`../public/${htmlFile}`, import.meta.url), 'utf8'), { url });
-  const calls = [];
+  const calls = []; current = dom;
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Node: dom.window.Node, location: dom.window.location, Event: dom.window.Event });
   globalThis.fetch = async (path, opts = {}) => {
     calls.push({ path, method: opts.method || 'GET' });
@@ -15,7 +26,7 @@ function browser(htmlFile, url, routes) {
   };
   return { dom, calls };
 }
-const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+const tick = (ms = 30) => sleep(ms);
 let n = 0; const fresh = (f) => import(`../public/${f}?v=${++n}`);
 
 test('fill() never renders null/undefined/false as text', async () => {

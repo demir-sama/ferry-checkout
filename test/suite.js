@@ -188,6 +188,35 @@ export function defineSuite(label, getOpts) {
     } finally { await t.close(); }
   });
 
+  test(`[${label}] NEAR AI status wording: key set is never reported as working until a real response succeeds`, async () => {
+    const t = await boot();
+    try {
+      const h = (await t.req('/api/health')).data.nearAi;
+      assert.equal(h.status, 'unset'); assert.match(h.label, /Not configured/);
+    } finally { await t.close(); }
+    const fake = fakeOneClick();
+    const t2 = await boot({ aiKey: 'sample-key-not-real', fake });
+    try {
+      await merchantWithProduct(t2);
+      let s = (await t2.req('/api/health')).data.nearAi;
+      assert.equal(s.status, 'unverified'); assert.equal(s.label, 'Key set — connection not verified. No successful NEAR AI response yet.');
+      assert.doesNotMatch(JSON.stringify(s), /sample-key-not-real|Connected/);
+      assert.deepEqual((await t2.req('/api/merchant')).data.nearAi, s);
+      fake.state.aiHttp = 401;
+      const r = await t2.req('/api/merchant/ai/drafts', { method: 'POST', body: { brief: 'We sell notebooks worldwide.' } });
+      assert.equal(r.status, 502); assert.equal(r.data.code, 'NEAR_AI_AUTH'); assert.match(r.data.error, /API key rejected/);
+      s = (await t2.req('/api/health')).data.nearAi;
+      assert.equal(s.status, 'auth_failed'); assert.match(s.label, /rejected the API key/); assert.ok(s.checkedAt);
+      fake.state.aiHttp = 503;
+      await t2.req('/api/merchant/ai/drafts', { method: 'POST', body: { brief: 'We sell notebooks worldwide.' } });
+      assert.equal((await t2.req('/api/health')).data.nearAi.status, 'auth_failed'); // non-auth outage does not claim anything new
+      fake.state.aiHttp = 0;
+      assert.equal((await t2.req('/api/merchant/ai/drafts', { method: 'POST', body: { brief: 'We sell notebooks worldwide.' } })).status, 201);
+      s = (await t2.req('/api/health')).data.nearAi;
+      assert.equal(s.status, 'verified'); assert.match(s.label, /^Connected/);
+    } finally { await t2.close(); }
+  });
+
   test(`[${label}] NEAR AI: unconfigured, truncated, forbidden-field and approved paths`, async () => {
     const t = await boot();
     try {

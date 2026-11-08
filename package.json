@@ -11,7 +11,7 @@
     "start": "node src/server.js",
     "dev": "FERRY_DEV=1 node --watch src/server.js",
     "merchant:create": "node scripts/create-merchant.js",
-    "test": "node --test --test-force-exit test/*.test.js",
+    "test": "node --test test/*.test.js",
     "check": "node --check src/*.js public/*.js scripts/*.js api/*.js",
     "db:migrate": "node scripts/migrate.js",
     "test:pg": "node --test test/pg.test.js"

@@ -43,6 +43,7 @@ export function fakeOneClick({ tamperQuote, tokens = TOKENS } = {}) {
         swapDetails: { intentHashes: [], nearTxHashes: [], originChainTxHashes: [], destinationChainTxHashes: [], ...(st.swapDetails || {}) } });
     }
     if (u.pathname === '/v1/chat/completions') {
+      if (state.aiHttp) return json({ error: 'sample upstream error' }, state.aiHttp);
       return json({ id: 'ferry-sample-chat', model: 'ferry-sample-model', choices: [{ finish_reason: state.aiFinish, message: { content: JSON.stringify(state.aiDraft) } }], usage: { prompt_tokens: 700, completion_tokens: 400, completion_tokens_details: { reasoning_tokens: 0 } } });
     }
     return json({ message: 'not found' }, 404);
