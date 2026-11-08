@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sample store — Ferry</title><meta name="description" content="A sample storefront showing the Ferry button">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="stylesheet" href="/styles.css"></head><body>
+<header class="top"><div class="wrap">
+<a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
+<button class="menu-btn" type="button" aria-expanded="false" aria-label="Menu">Menu</button>
+<nav class="links" aria-label="Main"><a href="/docs">Docs</a><a href="/about">About</a><a href="/demo-store">Sample store</a><a href="/dashboard">Dashboard</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<section>
+ <p class="badge-sample">This is a sample storefront for showing the embed. It isn't a real shop. Its products come from whichever local merchant you choose below, and any payment you send through it would be a real NEAR Intents mainnet payment.</p>
+ <h1 style="font-size:clamp(28px,4vw,42px);margin-top:18px">Northwind Paper Co. <span class="muted" style="font-size:.5em">(sample)</span></h1>
+ <p class="muted">Paste product IDs from your dashboard to render real Ferry buttons on this page, just as they would appear on your own site.</p>
+ <form id="demo-form" class="row" style="margin:12px 0 24px"><input id="demo-ids" placeholder="prd_… , prd_…" aria-label="Product IDs" style="max-width:520px"><button class="btn secondary" type="submit">Render buttons</button></form>
+ <div id="demo-grid" class="product-grid"></div>
+</section></div></main>
+<footer class="foot"><div class="wrap"><span>Ferry Checkout · MIT licensed · Settlement by <a href="https://docs.near-intents.org">NEAR Intents</a> · Drafting by <a href="https://docs.near.ai">NEAR AI Cloud</a></span><span><a href="/docs">Docs</a> · <a href="/about">About</a></span></div></footer>
+<script type="module" src="/common.js"></script><script type="module" src="/demo-store.js"></script></body></html>

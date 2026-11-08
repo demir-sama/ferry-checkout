@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>About — Ferry</title><meta name="description" content="About Ferry Checkout">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="stylesheet" href="/styles.css"></head><body>
+<header class="top"><div class="wrap">
+<a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
+<button class="menu-btn" type="button" aria-expanded="false" aria-label="Menu">Menu</button>
+<nav class="links" aria-label="Main"><a href="/docs">Docs</a><a href="/about">About</a><a href="/demo-store">Sample store</a><a href="/dashboard">Dashboard</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<section class="docs" style="max-width:760px">
+ <span class="kicker">About</span><h1>Ferry carries a payment across chains to a fixed destination.</h1>
+ <p class="lede">Merchants want one asset at one address. Buyers hold whatever they hold, on whichever chain. Ferry connects the two with an exact-amount checkout built on NEAR Intents.</p>
+ <h2>Why it exists</h2>
+ <p>NEAR co-founder Illia Polosukhin suggested a "universal checkout widget" during the NEAR Hackathon (November 2026): a checkout button any merchant can add, so buyers can pay through Intents from the wallet and chain they already have. Ferry is our take on that idea, built for the hackathon.</p>
+ <h2>What it is today</h2>
+ <ul>
+  <li>Hosted checkout links and an embeddable button for products and one-off invoices.</li>
+  <li>Exact-output quotes from the public NEAR Intents 1Click API, with deposit instructions, a countdown and refund details.</li>
+  <li>Payment status checked on the server, with a strict match before any order is marked paid.</li>
+  <li>A NEAR AI Cloud setup assistant that drafts copy into a strict schema for the merchant to approve.</li>
+ </ul>
+ <h2>Honest limits</h2>
+ <ul>
+  <li>NEAR Intents has no testnet, so every non-dry quote is a real mainnet deposit address. As of this build, the team hasn't completed an end-to-end mainnet payment.</li>
+  <li>Supported assets change. Ferry always reads the live 1Click list and claims nothing beyond it.</li>
+  <li>Payout addresses are limited to NEAR, EVM and Solana chains, because Ferry can only validate those formats.</li>
+  <li>Outbound merchant webhooks aren't built yet; see the docs.</li>
+ </ul>
+ <h2>Built with</h2>
+ <p><a href="https://docs.near-intents.org">NEAR Intents 1Click API</a>, <a href="https://docs.near.ai">NEAR AI Cloud</a>, and Node.js with its built-in <code>node:sqlite</code>. There are no third-party runtime dependencies. MIT licensed.</p>
+</section></div></main>
+<footer class="foot"><div class="wrap"><span>Ferry Checkout · MIT licensed · Settlement by <a href="https://docs.near-intents.org">NEAR Intents</a> · Drafting by <a href="https://docs.near.ai">NEAR AI Cloud</a></span><span><a href="/docs">Docs</a> · <a href="/about">About</a></span></div></footer>
+<script type="module" src="/common.js"></script></body></html>

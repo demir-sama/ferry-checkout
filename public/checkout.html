@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Checkout — Ferry</title><meta name="description" content="Pay with NEAR Intents">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="stylesheet" href="/styles.css"></head><body>
+<header class="top"><div class="wrap">
+<a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
+<button class="menu-btn" type="button" aria-expanded="false" aria-label="Menu">Menu</button>
+<nav class="links" aria-label="Main"><a href="/docs">Docs</a><a href="/about">About</a><a href="/demo-store">Sample store</a><a href="/dashboard">Dashboard</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<section class="checkout" aria-live="polite">
+ <div id="co-loading" class="card"><span class="spinner"></span> Loading checkout…</div>
+ <div id="co" class="hidden">
+  <div id="co-sample"></div>
+  <div class="card">
+   <div class="muted small" id="co-merchant"></div>
+   <h2 id="co-item" style="margin-top:4px"></h2><p id="co-desc" class="muted"></p>
+   <div class="muted small">Merchant receives exactly</div><div class="amount" id="co-amount"></div>
+   <div class="small muted" id="co-dest"></div>
+   <div style="margin-top:14px" class="status-big"><span class="dot" id="co-dot"></span><span id="co-status"></span></div>
+   <p id="co-note" class="small muted"></p>
+  </div>
+  <form id="co-form" class="card" style="margin-top:16px">
+   <h3>Pay with</h3>
+   <label for="co-asset">Token and chain</label><select id="co-asset" required></select>
+   <label for="co-refund">Your refund address on that chain</label><input id="co-refund" autocomplete="off" spellcheck="false" required>
+   <p class="hint">If the payment can't complete, NEAR Intents refunds you here, on the same chain you paid from.</p>
+   <div class="row" style="margin-top:16px"><button class="btn accent" type="submit" id="co-quote-btn">Get deposit instructions</button></div>
+   <p id="co-msg" class="hint" role="alert"></p>
+  </form>
+  <div id="co-pay" class="card hidden" style="margin-top:16px"></div>
+  <div id="co-history" class="card hidden" style="margin-top:16px"></div>
+  <p class="small muted" style="margin-top:16px">Settlement by NEAR Intents 1Click. Ferry doesn't hold your funds. This page checks status with the server automatically; you don't need to submit anything after you send.</p>
+ </div>
+</section></div></main>
+<footer class="foot"><div class="wrap"><span>Ferry Checkout · MIT licensed · Settlement by <a href="https://docs.near-intents.org">NEAR Intents</a> · Drafting by <a href="https://docs.near.ai">NEAR AI Cloud</a></span><span><a href="/docs">Docs</a> · <a href="/about">About</a></span></div></footer>
+<script type="module" src="/common.js"></script><script type="module" src="/checkout.js"></script></body></html>

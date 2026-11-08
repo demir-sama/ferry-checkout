@@ -1,0 +1,15 @@
+{
+  "name": "ferry-checkout",
+  "version": "0.1.0",
+  "description": "Ferry: a merchant checkout that lets buyers pay from many chains while the merchant receives an exact amount, via NEAR Intents 1Click. NEAR AI drafts store setup for human approval.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "FERRY_DEV=1 node --watch src/server.js",
+    "merchant:create": "node scripts/create-merchant.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/*.js public/*.js scripts/*.js"
+  }
+}

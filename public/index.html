@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ferry — exact-amount crypto checkout across chains</title><meta name="description" content="Merchants set one price and one payout. Buyers pay from the chain they already use. Settled by NEAR Intents.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="stylesheet" href="/styles.css"></head><body>
+<header class="top"><div class="wrap">
+<a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
+<button class="menu-btn" type="button" aria-expanded="false" aria-label="Menu">Menu</button>
+<nav class="links" aria-label="Main"><a href="/docs">Docs</a><a href="/about">About</a><a href="/demo-store">Sample store</a><a href="/dashboard">Dashboard</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<section class="hero">
+ <div>
+  <span class="kicker">Checkout for NEAR Intents</span>
+  <h1>Your price. Their chain. One payout.</h1>
+  <p class="lede">Ferry gives any store a checkout link and button. You set a price in the asset you want to receive and the address it goes to. Your buyer pays from a token on another supported chain, and NEAR Intents delivers the exact amount to you.</p>
+  <div class="row"><a class="btn accent" href="/dashboard">Open the dashboard</a><a class="btn secondary" href="/docs">Read the docs</a></div>
+  <p class="small muted" id="live-assets" aria-live="polite">Loading the live supported-asset list…</p>
+ </div>
+ <div class="hero-card" aria-label="Example checkout summary (illustrative)">
+  <div class="muted small">Illustrative example · not a real order</div>
+  <div style="margin:10px 0 2px" class="muted">Merchant receives exactly</div>
+  <div class="amount">25.00 USDC</div>
+  <div class="muted small">on the merchant's chosen chain and address</div>
+  <hr style="border-color:#2A3E5B;margin:18px 0">
+  <div class="muted small" style="margin-bottom:6px">Buyer can pay with, for example</div>
+  <div id="chips"><span class="chip">USDC · Base</span><span class="chip">USDT · Tron</span><span class="chip">SOL · Solana</span><span class="chip">BTC · Bitcoin</span><span class="chip">ETH · Arbitrum</span></div>
+ </div>
+</section>
+<section>
+ <h2>How a payment moves</h2>
+ <div class="flow">
+  <div><b>1 · Order</b>Ferry fixes the item and amount on the server when the order is created. Nobody can edit them afterwards.</div>
+  <div><b>2 · Quote</b>The buyer picks a token. Ferry asks 1Click for an <code>EXACT_OUTPUT</code> quote, which returns a one-time deposit address.</div>
+  <div><b>3 · Deposit</b>The buyer sends the quoted amount from any wallet before the deadline. If a payment fails, the funds are refunded to the buyer's refund address.</div>
+  <div><b>4 · Settled</b>Ferry polls 1Click and marks the order paid only when the reported swap matches this order exactly.</div>
+ </div>
+</section>
+<section style="margin-top:36px" class="grid cols-3">
+ <div class="card"><h3>Exact amount, by design</h3><p class="muted">Prices are stored as integer base units, and quotes fix the output amount. Price changes and slippage land on the buyer's side, never in your payout.</p></div>
+ <div class="card"><h3>Server decides "paid"</h3><p class="muted">A browser callback or a pasted transaction hash can't mark an order paid. Only a matching 1Click status that Ferry checks on the server does.</p></div>
+ <div class="card"><h3>AI that drafts, never decides</h3><p class="muted">NEAR AI Cloud drafts store copy into a strict schema. You review every field before applying it. The AI can't touch prices, payout addresses or payments.</p></div>
+</section></div></main>
+<footer class="foot"><div class="wrap"><span>Ferry Checkout · MIT licensed · Settlement by <a href="https://docs.near-intents.org">NEAR Intents</a> · Drafting by <a href="https://docs.near.ai">NEAR AI Cloud</a></span><span><a href="/docs">Docs</a> · <a href="/about">About</a></span></div></footer>
+<script type="module" src="/common.js"></script><script type="module" src="/home.js"></script></body></html>

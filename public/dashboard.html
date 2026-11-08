@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dashboard — Ferry</title><meta name="description" content="Ferry merchant dashboard">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="stylesheet" href="/styles.css"></head><body>
+<header class="top"><div class="wrap">
+<a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
+<button class="menu-btn" type="button" aria-expanded="false" aria-label="Menu">Menu</button>
+<nav class="links" aria-label="Main"><a href="/docs">Docs</a><a href="/about">About</a><a href="/demo-store">Sample store</a><a href="/dashboard">Dashboard</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<section id="login" class="hidden" style="max-width:480px;margin:24px auto">
+ <div class="card">
+  <h2>Merchant sign-in</h2>
+  <p class="muted small">Enter the access key printed when your store was created (<code>npm run merchant:create -- "Store name"</code>). Ferry stores only a hash of the key.</p>
+  <form id="login-form"><label for="key">Access key</label><input id="key" name="key" autocomplete="off" spellcheck="false" required placeholder="fk_…">
+  <div class="row" style="margin-top:16px"><button class="btn" type="submit">Sign in</button></div><p id="login-msg" class="hint" role="alert"></p></form>
+ </div>
+</section>
+<section id="app" class="hidden">
+ <div class="row" style="justify-content:space-between"><div><span class="kicker">Dashboard</span><h1 id="store-name" style="font-size:clamp(26px,4vw,38px)">Store</h1></div><div class="row"><span id="sample-flag"></span><button id="logout" class="btn secondary small" type="button">Sign out</button></div></div>
+ <div class="tabs" role="tablist">
+  <button role="tab" data-tab="setup" aria-selected="true">Payout & assets</button><button role="tab" data-tab="products">Products</button><button role="tab" data-tab="orders">Orders</button><button role="tab" data-tab="assistant">Setup assistant</button><button role="tab" data-tab="embed">Embed</button>
+ </div>
+ <div data-panel="setup" class="grid cols-2">
+  <form id="settings-form" class="card">
+   <h3>Payout destination</h3><p class="muted small">Only you set this. All orders settle the exact price to this asset and address. Changing it doesn't affect orders that already exist.</p>
+   <label for="s-name">Store name</label><input id="s-name" maxlength="80" required>
+   <label for="s-asset">Receive asset</label><select id="s-asset" required></select><p class="hint">Live from NEAR Intents. Payouts are limited to NEAR, EVM and Solana chains, because Ferry can only validate those address formats.</p>
+   <label for="s-recipient">Payout address</label><input id="s-recipient" autocomplete="off" spellcheck="false" required><p class="hint" id="recipient-hint">Paste an address you control. Double-check it. Payments can't be reversed.</p>
+   <div class="row" style="margin-top:16px"><button class="btn" type="submit">Save payout</button></div><p id="settings-msg" class="hint" role="status"></p>
+  </form>
+  <div class="card">
+   <h3>Accepted payment assets</h3><p class="muted small">Leave this empty to accept every live asset, or choose which assets buyers can pay with.</p>
+   <input id="asset-filter" placeholder="Filter by symbol or chain" aria-label="Filter assets">
+   <div id="asset-list" style="max-height:320px;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:6px 10px"></div>
+   <div class="row" style="margin-top:12px"><button id="save-accepted" class="btn secondary" type="button">Save accepted assets</button><span id="accepted-count" class="small muted"></span></div>
+  </div>
+ </div>
+ <div data-panel="products" class="hidden grid cols-2">
+  <form id="product-form" class="card"><h3>New product</h3>
+   <label for="p-name">Name</label><input id="p-name" maxlength="80" required>
+   <label for="p-desc">Description</label><textarea id="p-desc" maxlength="600"></textarea>
+   <label for="p-price">Price <span id="p-unit" class="muted"></span></label><input id="p-price" inputmode="decimal" required placeholder="e.g. 25.00"><p class="hint">Charged in your payout asset. Ferry stores it as exact base units.</p>
+   <div class="row" style="margin-top:16px"><button class="btn" type="submit">Add product</button></div><p id="product-msg" class="hint" role="status"></p>
+  </form>
+  <form id="invoice-form" class="card"><h3>One-off invoice</h3>
+   <label for="i-title">Title</label><input id="i-title" maxlength="80" required>
+   <label for="i-desc">Note</label><input id="i-desc" maxlength="600">
+   <label for="i-amount">Amount <span id="i-unit" class="muted"></span></label><input id="i-amount" inputmode="decimal" required>
+   <div class="row" style="margin-top:16px"><button class="btn" type="submit">Create checkout link</button></div><p id="invoice-msg" class="hint" role="status"></p>
+  </form>
+  <div class="card" style="grid-column:1/-1"><h3>Products</h3><div class="table-wrap"><table><thead><tr><th>Name</th><th>Price</th><th>Link</th><th></th></tr></thead><tbody id="product-rows"></tbody></table></div></div>
+ </div>
+ <div data-panel="orders" class="hidden">
+  <div class="card"><div class="row" style="justify-content:space-between"><h3>Orders</h3><button id="reload-orders" class="btn secondary small" type="button">Refresh</button></div>
+   <div class="table-wrap"><table><thead><tr><th>Order</th><th>Item</th><th>Amount</th><th>Status</th><th>Created</th></tr></thead><tbody id="order-rows"></tbody></table></div></div>
+  <div id="order-detail" class="card hidden" style="margin-top:20px"></div>
+ </div>
+ <div data-panel="assistant" class="hidden grid cols-2">
+  <form id="ai-form" class="card"><h3>NEAR AI setup assistant</h3>
+   <p class="muted small">Describe your store. NEAR AI Cloud drafts a tagline, About text, button label, accent colour, product copy, FAQ and suggested payment assets into a strict schema. Ferry checks the draft and shows you a diff. Nothing is applied until you approve it.</p>
+   <div id="ai-status"></div>
+   <label for="ai-brief">Store brief</label><textarea id="ai-brief" maxlength="1500" placeholder="We sell hand-bound notebooks and ship worldwide…"></textarea>
+   <div class="row" style="margin-top:16px"><button id="ai-go" class="btn" type="submit">Draft with NEAR AI</button></div><p id="ai-msg" class="hint" role="status"></p>
+   <p class="hint">The AI never sees or sets your payout address, prices, quotes or payment status.</p>
+  </form>
+  <div class="card"><h3>Drafts</h3><div id="ai-drafts"><p class="muted small">No drafts yet.</p></div></div>
+  <div id="ai-review" class="card hidden" style="grid-column:1/-1"></div>
+ </div>
+ <div data-panel="embed" class="hidden card">
+  <h3>Add Ferry to your site</h3>
+  <p class="muted">Add the script once, then place a button for each product. The button links to Ferry's hosted checkout for that product, so it doesn't run any payment code on your page.</p>
+  <pre id="embed-code"></pre>
+  <p class="small muted">The full guide is in <a href="/docs#embed">Docs → Embed</a>.</p>
+ </div>
+</section></div></main>
+<footer class="foot"><div class="wrap"><span>Ferry Checkout · MIT licensed · Settlement by <a href="https://docs.near-intents.org">NEAR Intents</a> · Drafting by <a href="https://docs.near.ai">NEAR AI Cloud</a></span><span><a href="/docs">Docs</a> · <a href="/about">About</a></span></div></footer>
+<script type="module" src="/common.js"></script><script type="module" src="/dashboard.js"></script></body></html>

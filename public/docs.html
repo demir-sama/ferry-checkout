@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Docs — Ferry</title><meta name="description" content="How Ferry works">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="stylesheet" href="/styles.css"></head><body>
+<header class="top"><div class="wrap">
+<a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
+<button class="menu-btn" type="button" aria-expanded="false" aria-label="Menu">Menu</button>
+<nav class="links" aria-label="Main"><a href="/docs">Docs</a><a href="/about">About</a><a href="/demo-store">Sample store</a><a href="/dashboard">Dashboard</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<section class="docs" style="max-width:820px">
+<span class="kicker">Docs</span><h1>Ferry documentation</h1>
+<p class="lede">Ferry is a self-hostable checkout. Merchants receive an exact amount of one asset at one address. Buyers pay with any asset in the live NEAR Intents list, from that asset's own chain.</p>
+<nav class="card small"><b>On this page:</b> <a href="#quickstart">Quickstart</a> · <a href="#flow">Payment flow</a> · <a href="#paid">When an order is paid</a> · <a href="#assets">Assets & chains</a> · <a href="#embed">Embed</a> · <a href="#ai">NEAR AI assistant</a> · <a href="#api">HTTP API</a> · <a href="#security">Security</a> · <a href="#limits">Limits</a></nav>
+<h2 id="quickstart">Quickstart</h2>
+<pre>node --version            # needs 22.13 or newer (uses built-in node:sqlite)
+npm run merchant:create -- "My Store"   # prints an access key once
+npm start                 # http://127.0.0.1:4317
+# optional server-side secrets
+NEAR_AI_API_KEY=...       # enables the setup assistant
+ONECLICK_JWT=...          # 1Click partner JWT; lowers fees</pre>
+<p>Sign in at <code>/dashboard</code> with the access key. Set your payout asset and address, add products, then share <code>/p/&lt;product-id&gt;</code> links or embed buttons.</p>
+<h2 id="flow">Payment flow</h2>
+<ol>
+<li><b>Order.</b> Opening a product link and pressing pay creates an order on the server. The order fixes the item, the amount in base units, the payout asset and the payout address. It gets a secret checkout URL (<code>/c/chk_…</code>) that's separate from its internal order ID.</li>
+<li><b>Quote.</b> The buyer chooses an asset and enters a refund address. Ferry sends <code>POST /v0/quote</code> to 1Click with <code>swapType: EXACT_OUTPUT</code>, <code>amount</code> set to the order amount, <code>depositType: ORIGIN_CHAIN</code> and <code>recipientType: DESTINATION_CHAIN</code>. It checks that the response repeats the same amount, recipient and destination before storing the quote and its 1Click signature.</li>
+<li><b>Deposit.</b> The buyer sends <code>amountIn</code>, which includes a slippage buffer, to the one-time deposit address before the deadline. Anything above what's needed is refunded to the buyer. Deposits below <code>minAmountIn</code> are refunded by the deadline.</li>
+<li><b>Settlement.</b> Market makers fill the intent and deliver exactly the order amount to the merchant. Ferry polls <code>GET /v0/status</code> in the background and whenever the checkout page is open.</li>
+</ol>
+<h2 id="paid">When an order is marked paid</h2>
+<p>An order becomes <code>paid</code> only when every one of these is true:</p>
+<ul><li>1Click reports <code>SUCCESS</code> for a deposit address Ferry issued for this order.</li><li>The status response's quote has the same deposit address, memo and signature as the stored quote.</li><li>The request it reports was <code>EXACT_OUTPUT</code> to the order's recipient and destination asset, for the order's exact amount.</li><li>Any settled <code>amountOut</code> that's reported is at least the order amount.</li></ul>
+<p>A <code>SUCCESS</code> that fails these checks puts the order into <code>needs_review</code> and doesn't mark it paid. Ferry has no endpoint that accepts a transaction hash or a client callback as proof of payment.</p>
+<h2 id="assets">Assets & chains</h2>
+<p>Ferry reads <code>GET /v0/tokens</code> and caches the list for 5 minutes, keeping a persisted fallback copy. Ferry supports exactly what that list contains at the moment, and nothing more. Payout chains are limited to NEAR, EVM chains and Solana, because Ferry can only validate those address formats. Refund addresses on other chains get a structural check, and 1Click validates them when quoting. If you pay out to a NEAR account, it must be registered for the token's storage, or delivery can fail.</p>
+<p>NEAR Intents has no testnet. Every non-dry quote is a real mainnet deposit address. To test, use a separate account and small amounts. 1Click can reject amounts that are too small, so don't assume a minimum.</p>
+<h2 id="embed">Embed</h2>
+<pre>&lt;script src="https://YOUR-FERRY-HOST/embed.js" defer&gt;&lt;/script&gt;
+&lt;div data-ferry-product="prd_…" data-ferry-label="Pay with crypto"&gt;&lt;/div&gt;</pre>
+<p>The script only renders a link to Ferry's hosted product page. No payment code or secrets run on your site.</p>
+<h2 id="ai">NEAR AI setup assistant</h2>
+<p>When <code>NEAR_AI_API_KEY</code> is set, Ferry sends the merchant's brief to NEAR AI Cloud (<code>POST https://cloud-api.near.ai/v1/chat/completions</code>, Bearer auth). It uses <code>response_format: json_schema</code> (strict) and the model in <code>NEAR_AI_MODEL</code>, by default <code>Qwen/Qwen3.6-35B-A3B-FP8</code>, which NEAR AI lists as supporting structured outputs. The draft can include only these fields: tagline, about, button label, accent from a fixed palette, product names and descriptions, FAQ, and suggested asset IDs.</p>
+<p>Ferry then runs its own deterministic validator. It rejects any extra or forbidden field (anything resembling a recipient, price, amount, address, payment status or transfer), any text that's too long or contains markup, and any asset ID that isn't in the live list. The merchant sees a diff and picks the fields to apply. Product copy becomes a product only after the merchant enters their own price. When no key is set, the assistant says so and stays off. Ferry never fabricates a draft or switches to another provider.</p>
+<h2 id="api">HTTP API</h2>
+<table><thead><tr><th>Method & path</th><th>Auth</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>GET /api/assets</code></td><td>public</td><td>Live asset list (source and time fetched)</td></tr>
+<tr><td><code>GET /api/public/products/:id</code></td><td>public</td><td>Product details</td></tr>
+<tr><td><code>POST /api/public/products/:id/orders</code></td><td>public, rate-limited</td><td>Create an order and return its checkout URL</td></tr>
+<tr><td><code>GET /api/checkout/:secret</code> · <code>/status</code></td><td>checkout secret</td><td>View the order; <code>/status</code> also refreshes it from 1Click</td></tr>
+<tr><td><code>POST /api/checkout/:secret/quote</code></td><td>checkout secret, same-origin</td><td>Exact-output quote</td></tr>
+<tr><td><code>POST /api/auth/login</code></td><td>access key</td><td>Start an HttpOnly, SameSite=Strict session</td></tr>
+<tr><td><code>/api/merchant…</code></td><td>session, same-origin</td><td>Settings, products, invoices, orders, AI drafts</td></tr>
+</tbody></table>
+<h2 id="security">Security</h2>
+<ul><li>Secrets (the 1Click JWT and the NEAR AI key) live only in server environment variables and never reach the browser.</li><li>Merchant access keys, session tokens and checkout secrets are stored only as SHA-256 hashes.</li><li>A strict Content-Security-Policy is applied, with no third-party scripts. Every page sets <code>frame-ancestors 'none'</code>.</li><li>State-changing requests must be same-origin, carry a JSON content type and stay under the body-size limit. Orders, quotes, sign-ins and AI calls are rate-limited.</li><li>Amounts are handled as BigInt base units. Decimals are parsed exactly and floats are never used.</li></ul>
+<h2 id="limits">Current limits</h2>
+<ul><li>Outbound merchant webhooks aren't implemented yet. They'll need signed payloads, an allowlist of destinations to prevent SSRF, retries and idempotency. Until then, merchants check orders in the dashboard.</li><li>Single-node SQLite storage. A hosted deployment needs a persistent disk, or a port to Postgres (for example, Neon).</li><li>There's no QR code for deposit addresses yet; buyers copy the address instead.</li><li>Merchant sign-in is by access key only; there are no user accounts yet.</li></ul>
+</section></div></main>
+<footer class="foot"><div class="wrap"><span>Ferry Checkout · MIT licensed · Settlement by <a href="https://docs.near-intents.org">NEAR Intents</a> · Drafting by <a href="https://docs.near.ai">NEAR AI Cloud</a></span><span><a href="/docs">Docs</a> · <a href="/about">About</a></span></div></footer>
+<script type="module" src="/common.js"></script></body></html>
