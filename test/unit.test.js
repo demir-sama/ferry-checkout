@@ -4,7 +4,7 @@ import { parseUnits, formatUnits } from '../src/amounts.js';
 import { validateAddress } from '../src/addresses.js';
 import { verifySuccess, deriveOrderStatus } from '../src/reconcile.js';
 import { validateDraft } from '../src/ai.js';
-import { fakeOneClick, TOKENS } from './fixtures.js';
+import { fakeOneClick, TOKENS } from "./fixtures.js";
 
 test('parseUnits/formatUnits are exact for large decimals', () => {
   assert.equal(parseUnits('25.5', 6), 25500000n);
@@ -28,15 +28,15 @@ test('address validation by chain family', () => {
 });
 
 const order = { recipient: 'shop.near', dest_asset_id: TOKENS[0].assetId, amount_out_base: '2000000', status: 'awaiting_deposit', expires_at: new Date(Date.now() + 3600e3).toISOString() };
-const quote = { deposit_address: '0xDEP', deposit_memo: null, signature: 'ed25519:S' };
-const okStatus = () => ({ status: 'SUCCESS', quoteResponse: { signature: 'ed25519:S', quote: { depositAddress: '0xDEP' }, quoteRequest: { swapType: 'EXACT_OUTPUT', recipient: 'shop.near', destinationAsset: TOKENS[0].assetId, amount: '2000000' } }, swapDetails: { amountOut: '2000000' } });
+const quote = { deposit_address: '0xDEP', deposit_memo: null, signature: 'ed25519:S', origin_asset_id: TOKENS[1].assetId, refund_to: '0xREF', amount_in: '2025107', min_amount_in: '2004902' };
+const okStatus = () => ({ status: 'SUCCESS', quoteResponse: { signature: 'ed25519:S', quote: { depositAddress: '0xDEP', amountIn: '2025107', minAmountIn: '2004902' }, quoteRequest: { swapType: 'EXACT_OUTPUT', recipient: 'shop.near', destinationAsset: TOKENS[0].assetId, amount: '2000000', originAsset: TOKENS[1].assetId, refundTo: '0xREF' } }, swapDetails: { amountOut: '2000000' } });
 
 test('verifySuccess requires an exact match on every field', () => {
   assert.equal(verifySuccess(order, quote, okStatus()).ok, true);
   const cases = [
     (s) => (s.quoteResponse.quote.depositAddress = '0xOTHER'), (s) => (s.quoteResponse.signature = 'x'), (s) => (s.quoteResponse.quoteRequest.recipient = 'attacker.near'),
     (s) => (s.quoteResponse.quoteRequest.amount = '1'), (s) => (s.quoteResponse.quoteRequest.swapType = 'EXACT_INPUT'), (s) => (s.quoteResponse.quoteRequest.destinationAsset = 'nep141:wrap.near'),
-    (s) => (s.swapDetails.amountOut = '1999999'), (s) => delete s.quoteResponse,
+    (s) => (s.swapDetails.amountOut = '1999999'), (s) => delete s.quoteResponse, (s) => (s.quoteResponse.quoteRequest.refundTo = '0xX'), (s) => (s.quoteResponse.quote.amountIn = '1'), (s) => (s.quoteResponse.quote.minAmountIn = '1'), (s) => (s.quoteResponse.quote.depositMemo = 'M'), (s) => (s.quoteResponse.quoteRequest.originAsset = 'x'),
   ];
   for (const mut of cases) { const s = okStatus(); mut(s); assert.equal(verifySuccess(order, quote, s).ok, false); }
 });
@@ -64,4 +64,22 @@ test('AI draft validator is strict and deterministic', () => {
   ];
   for (const b of bad) assert.equal(validateDraft(b, { liveAssetIds: live }).ok, false, JSON.stringify(b)?.slice(0, 80));
   const { tagline, ...missing } = good; assert.equal(validateDraft(missing, { liveAssetIds: live }).ok, false);
+});
+
+import { checkQuoteResponse } from '../src/service.js';
+import { LIVE_DRY_QUOTE } from './fixtures.js';
+test('checkQuoteResponse accepts the real 1Click quote shape and rejects drift', () => {
+  // Real dry response (captured live) with the fields only a non-dry quote has added.
+  const resp = structuredClone(LIVE_DRY_QUOTE);
+  const request = { ...resp.quoteRequest, dry: false };
+  resp.quoteRequest.dry = false; resp.quote.depositAddress = '0xFERRYSAMPLE'; resp.signature ||= 'ed25519:x';
+  assert.deepEqual(checkQuoteResponse(request, resp), []);
+  assert.ok(checkQuoteResponse(request, resp, { memoMode: true }).includes('depositMemo missing'));
+  const r2 = structuredClone(resp); r2.quote.amountOut = '2000001'; assert.ok(checkQuoteResponse(request, r2).includes('amountOut'));
+  const r3 = structuredClone(resp); r3.quote.amountIn = '2.5'; assert.ok(checkQuoteResponse(request, r3).includes('amountIn'));
+});
+test('output token decimals: base units survive formatting at 6, 18 and 24 decimals', () => {
+  for (const [dec, s] of [[6, '2.025107'], [18, '0.000000000000000001'], [24, '123456789.123456789123456789123456']]) assert.equal(formatUnits(parseUnits(s, dec), dec), s);
+  assert.equal(formatUnits(LIVE_DRY_QUOTE.quote.amountOut, 6), LIVE_DRY_QUOTE.quote.amountOutFormatted.replace(/\.0$/, ''));
+  assert.equal(formatUnits(LIVE_DRY_QUOTE.quote.amountIn, 6), LIVE_DRY_QUOTE.quote.amountInFormatted);
 });

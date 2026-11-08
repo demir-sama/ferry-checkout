@@ -12,7 +12,9 @@ Ferry is built for the NEAR Hackathon (Nov 2026). It follows NEAR co-founder Ill
 | Live asset discovery (`GET /v0/tokens`) | Working against the public API (216 assets on 2026-11-08) |
 | Exact-output request shape | Checked live with `dry: true` quotes (`npm run` → `node scripts/live-dry-quote.js`) |
 | Real deposit address → settlement → paid | Implemented and covered by fixture tests. **No mainnet payment has been made yet** (NEAR Intents has no testnet) |
-| NEAR AI setup assistant | Implemented and covered by fixture tests. **No real NEAR AI call has been made yet**: no API key/credits have been acquired. When the key is missing, the server reports "not configured" |
+| NEAR AI setup assistant | **Verified live** on 2026-11-08 with `Qwen/Qwen3.8-27B` and reasoning disabled: the strict-schema draft passed Ferry's validator (739 prompt + 419 completion tokens, 0 reasoning). Evidence: `docs/evidence/near-ai-live-draft-2026-11-08.json`. When no key is set, the server reports "not configured" |
+| Storage | SQLite locally; Postgres (Neon) in production. The test suite runs against both, with Postgres via PGlite over the wire protocol |
+| QR codes, quote replacement, extra-payment detection | Implemented and tested |
 | Merchant webhooks | Not implemented (see Docs → Limits) |
 
 ## Run locally
@@ -21,10 +23,11 @@ node --version                 # 22.13+ (built-in node:sqlite)
 npm run merchant:create -- "My Store"
 npm start                      # http://127.0.0.1:4317
 FERRY_DEV=1 npm start          # dev mode: creates a clearly labelled SAMPLE merchant on an empty DB
-npm test                       # unit + HTTP tests (synthetic 1Click/NEAR AI fixtures)
+npm test                       # unit + HTTP suites on SQLite and Postgres (fixtures shaped from a real 1Click response)
+node scripts/live-ai-draft.js  # one live NEAR AI draft (uses NEAR_AI_API_KEY; never prints it)
 node scripts/live-dry-quote.js base USDC 2   # live dry quote; no funds, no deposit address
 ```
-Server-side environment (never sent to the browser): `NEAR_AI_API_KEY`, `NEAR_AI_MODEL` (default `Qwen/Qwen3.6-35B-A3B-FP8`), `ONECLICK_JWT` (optional partner key; unauthenticated quotes pay an extra platform fee), `PUBLIC_BASE_URL`, `FERRY_DB`, `PORT`, `QUOTE_TTL_MINUTES`, `SLIPPAGE_BPS`.
+Server-side environment (never sent to the browser): `NEAR_AI_API_KEY`, `NEAR_AI_MODEL` (default `Qwen/Qwen3.8-27B`), `NEAR_AI_MAX_TOKENS` (default 1500), `DATABASE_URL` (Postgres; required in production), `CRON_SECRET`, `ONECLICK_JWT` (optional partner key; unauthenticated quotes pay an extra platform fee), `PUBLIC_BASE_URL`, `FERRY_DB`, `PORT`, `QUOTE_TTL_MINUTES`, `SLIPPAGE_BPS`.
 
 ## How it works
 1. **Order**: the server fixes the item, the amount as integer base units, the payout asset and the recipient. Buyers get a secret `/c/chk_…` URL.
@@ -34,13 +37,13 @@ Server-side environment (never sent to the browser): `NEAR_AI_API_KEY`, `NEAR_AI
 
 The AI can only produce copy, an accent colour from a fixed palette, and suggested asset IDs from the live list. A deterministic validator rejects any field resembling a price, payout, address, payment status or transfer. Each field needs the merchant's approval, and products need a price the merchant enters themselves.
 
-See `/docs` in the app (`public/docs.html`) and `docs/ARCHITECTURE.md`.
+Hosting on Vercel with Neon: see Docs → Hosting. See `/docs` in the app (`public/docs.html`) and `docs/ARCHITECTURE.md`.
 
 ## Hackathon disclosure
 This repository is an independent project. The same author has also submitted **Tripwire** (Memecoins With Mechanics track), a separate codebase, to the NEAR Hackathon. The two projects share no code.
 
 ## Credits
-NEAR Intents 1Click API (https://docs.near-intents.org), NEAR AI Cloud (https://docs.near.ai). There are no third-party runtime dependencies: only Node.js built-ins (`node:http`, `node:sqlite`, `node:crypto`, `node:test`).
+NEAR Intents 1Click API (https://docs.near-intents.org), NEAR AI Cloud (https://docs.near.ai). Runtime dependencies: `pg` (MIT) and `qrcode` (MIT). Dev/test only: `@electric-sql/pglite` and `@electric-sql/pglite-socket` (Apache-2.0). Everything else uses Node.js built-ins.
 
 ## License
 MIT. See `LICENSE`.

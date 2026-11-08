@@ -1,0 +1,47 @@
+{
+  "live": true,
+  "at": "2026-11-07T23:56:58.591Z",
+  "model": "Qwen/Qwen3.8-27B",
+  "finishReason": "stop",
+  "usage": {
+    "promptTokens": 739,
+    "completionTokens": 419,
+    "reasoningTokens": 0
+  },
+  "ms": 9574,
+  "responseId": "c0bb9cf62a2f425aafe61d85c94c8d89",
+  "validatorOk": true,
+  "validatorErrors": [],
+  "draft": {
+    "tagline": "Hand-bound notebooks, shipped worldwide.",
+    "about": "Sample Bindery crafts A5 and pocket-sized notebooks. We accept stablecoin payments for a simple checkout experience.",
+    "buttonLabel": "Pay with stablecoin",
+    "accent": "ember",
+    "productCopy": [
+      {
+        "name": "A5 Notebook",
+        "description": "A hand-bound A5 notebook with a durable cover and smooth pages."
+      },
+      {
+        "name": "Pocket Notebook",
+        "description": "A compact, hand-bound pocket notebook for everyday notes."
+      }
+    ],
+    "faq": [
+      {
+        "q": "Do you ship internationally?",
+        "a": "Yes, we ship worldwide."
+      },
+      {
+        "q": "Which payment methods do you accept?",
+        "a": "We accept stablecoins such as USDC and USDT."
+      }
+    ],
+    "suggestedAssetIds": [
+      "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+      "nep141:usdt.tether-token.near",
+      "nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near",
+      "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near"
+    ]
+  }
+}

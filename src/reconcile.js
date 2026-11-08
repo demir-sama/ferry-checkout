@@ -14,6 +14,10 @@ export function verifySuccess(order, quote, statusResp) {
   if (req.recipient !== order.recipient) problems.push('recipient mismatch');
   if (req.destinationAsset !== order.dest_asset_id) problems.push('destination asset mismatch');
   if (req.amount !== order.amount_out_base) problems.push('amount mismatch');
+  if (req.originAsset !== quote.origin_asset_id) problems.push('origin asset mismatch');
+  if (req.refundTo !== quote.refund_to) problems.push('refund address mismatch');
+  if (q.amountIn !== quote.amount_in) problems.push('quoted amountIn mismatch');
+  if (q.minAmountIn !== quote.min_amount_in) problems.push('quoted minAmountIn mismatch');
   const settled = statusResp?.swapDetails?.amountOut;
   if (settled != null && /^\d+$/.test(String(settled)) && BigInt(settled) < BigInt(order.amount_out_base)) problems.push('settled amount below order amount');
   return { ok: problems.length === 0, problems };

@@ -23,10 +23,11 @@
    <p id="co-note" class="small muted"></p>
   </div>
   <form id="co-form" class="card" style="margin-top:16px">
-   <h3>Pay with</h3>
+   <h3 id="co-form-title">Pay with</h3>
    <label for="co-asset">Token and chain</label><select id="co-asset" required></select>
    <label for="co-refund">Your refund address on that chain</label><input id="co-refund" autocomplete="off" spellcheck="false" required>
    <p class="hint">If the payment can't complete, NEAR Intents refunds you here, on the same chain you paid from.</p>
+   <div id="co-replace" class="notice warn hidden" style="margin-top:14px"><label style="display:flex;gap:10px;align-items:flex-start;margin:0;font-weight:500"><input type="checkbox" id="co-replace-ok" style="width:auto;min-height:0;margin-top:4px"> I have not sent anything to the current deposit address. I understand it stays valid until its deadline, so sending to both addresses would pay twice.</label></div>
    <div class="row" style="margin-top:16px"><button class="btn accent" type="submit" id="co-quote-btn">Get deposit instructions</button></div>
    <p id="co-msg" class="hint" role="alert"></p>
   </form>

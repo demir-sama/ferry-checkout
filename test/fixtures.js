@@ -1,26 +1,37 @@
-// TEST FIXTURES ONLY. Synthetic 1Click and NEAR AI responses used to exercise logic offline.
-// Shapes follow https://1click.chaindefuser.com/docs/v0/openapi.yaml; values are fabricated and labelled as such.
+// TEST FIXTURES ONLY — clearly synthetic. The quote shape is cloned from a REAL dry-run 1Click response captured
+// on 2026-11-08 (test/data/live-dry-quote-base-usdc.json). Fields a dry quote omits (depositAddress, deadline,
+// timeWhenInactive) and every status response are SYNTHETIC, built to the OpenAPI GetExecutionStatusResponse
+// schema (https://1click.chaindefuser.com/docs/v0/openapi.yaml). Deposit addresses are labelled FERRYSAMPLE.
+import fs from 'node:fs';
+const LIVE = JSON.parse(fs.readFileSync(new URL('./data/live-dry-quote-base-usdc.json', import.meta.url)));
+export const LIVE_DRY_QUOTE = LIVE;
+
 export const TOKENS = [
   { assetId: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', decimals: 6, blockchain: 'near', symbol: 'USDC', price: 1, priceUpdatedAt: '2026-11-07T00:00:00Z' },
   { assetId: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near', decimals: 6, blockchain: 'base', symbol: 'USDC', price: 1, priceUpdatedAt: '2026-11-07T00:00:00Z' },
   { assetId: 'nep141:btc.omft.near', decimals: 8, blockchain: 'btc', symbol: 'BTC', price: 90000, priceUpdatedAt: '2026-11-07T00:00:00Z' },
   { assetId: 'nep141:wrap.near', decimals: 24, blockchain: 'near', symbol: 'wNEAR', price: 3, priceUpdatedAt: '2026-11-07T00:00:00Z' },
+  { assetId: 'nep141:stellar-sample.omft.near', decimals: 7, blockchain: 'stellar', symbol: 'XLM', price: 0.1, priceUpdatedAt: '2026-11-07T00:00:00Z' },
 ];
 
-export function fakeOneClick({ tamper } = {}) {
+export function fakeOneClick({ tamperQuote, tokens = TOKENS } = {}) {
   const quotes = new Map(); const statuses = new Map(); let n = 0;
-  const calls = [];
+  const calls = []; const state = { tokens: structuredClone(tokens), aiDraft: structuredClone(fakeOneClick.aiDraft), aiFinish: 'stop' };
   async function fetchImpl(url, init = {}) {
-    const u = new URL(url); calls.push({ path: u.pathname, method: init.method, auth: init.headers?.authorization });
+    const u = new URL(url); calls.push({ path: u.pathname, method: init.method, auth: init.headers?.authorization, body: init.body });
     const json = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json' } });
-    if (u.pathname === '/v0/tokens') return json(TOKENS);
+    if (u.pathname === '/v0/tokens') return json(state.tokens);
     if (u.pathname === '/v0/quote') {
       const req = JSON.parse(init.body);
       if (req.refundTo === 'reject-me') return json({ message: 'refundTo is not valid' }, 400);
-      const depositAddress = `0xFAKEDEPOSIT${String(++n).padStart(30, '0')}`;
-      const resp = { correlationId: `fixture-${n}`, timestamp: new Date().toISOString(), signature: `ed25519:FIXTURE${n}`,
-        quoteRequest: { ...req, ...(tamper?.(req) || {}) },
-        quote: { depositAddress, amountIn: '2025044', amountInFormatted: '2.025044', amountInUsd: '2.02', minAmountIn: '2004839', amountOut: req.amount, amountOutFormatted: '2.0', amountOutUsd: '2', minAmountOut: req.amount, deadline: req.deadline, timeEstimate: 35, refundFee: '2400' } };
+      await new Promise((r) => setTimeout(r, 30)); // simulate network so concurrent requests overlap
+      const depositAddress = `0xFERRYSAMPLE${String(++n).padStart(28, '0')}`;
+      const resp = structuredClone(LIVE);
+      resp.correlationId = `ferry-sample-${n}`; resp.signature = `ed25519:FERRYSAMPLESIG${n}`; resp.timestamp = new Date().toISOString();
+      resp.quoteRequest = { ...resp.quoteRequest, ...req };
+      resp.quote = { ...resp.quote, depositAddress, amountOut: req.amount, minAmountOut: req.amount, deadline: req.deadline, timeWhenInactive: req.deadline };
+      if (req.depositMode === 'MEMO') resp.quote.depositMemo = `FERRYSAMPLEMEMO${n}`;
+      tamperQuote?.(resp, req);
       quotes.set(depositAddress, resp); statuses.set(depositAddress, { status: 'PENDING_DEPOSIT' });
       return json(resp);
     }
@@ -28,13 +39,15 @@ export function fakeOneClick({ tamper } = {}) {
       const a = u.searchParams.get('depositAddress'); const q = quotes.get(a);
       if (!q) return json({ message: 'Deposit address not found' }, 404);
       const st = statuses.get(a);
-      return json({ correlationId: 'fixture-status', quoteResponse: st.quoteResponse || q, status: st.status, updatedAt: new Date().toISOString(),
+      return json({ correlationId: 'ferry-sample-status', quoteResponse: st.quoteResponse || q, status: st.status, updatedAt: new Date().toISOString(),
         swapDetails: { intentHashes: [], nearTxHashes: [], originChainTxHashes: [], destinationChainTxHashes: [], ...(st.swapDetails || {}) } });
     }
-    if (u.pathname === '/v1/chat/completions') return json({ id: 'fixture-chat', model: 'fixture-model', choices: [{ message: { content: JSON.stringify(fakeOneClick.aiDraft) } }] });
+    if (u.pathname === '/v1/chat/completions') {
+      return json({ id: 'ferry-sample-chat', model: 'ferry-sample-model', choices: [{ finish_reason: state.aiFinish, message: { content: JSON.stringify(state.aiDraft) } }], usage: { prompt_tokens: 700, completion_tokens: 400, completion_tokens_details: { reasoning_tokens: 0 } } });
+    }
     return json({ message: 'not found' }, 404);
   }
-  return { fetchImpl, quotes, statuses, calls, setStatus: (addr, s) => statuses.set(addr, { ...statuses.get(addr), ...s }) };
+  return { fetchImpl, quotes, statuses, calls, state, setStatus: (addr, s) => statuses.set(addr, { ...statuses.get(addr), ...s }) };
 }
 
 fakeOneClick.aiDraft = {

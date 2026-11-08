@@ -18,6 +18,11 @@ function render(o) {
   const blocked = ['paid', 'processing', 'incomplete_deposit', 'needs_review', 'expired'].includes(o.status);
   $('#co-form').classList.toggle('hidden', blocked);
   const latest = o.quotes[o.quotes.length - 1];
+  const live = Boolean(latest?.live);
+  $('#co-replace').classList.toggle('hidden', !live);
+  if (!live) $('#co-replace-ok').checked = false;
+  $('#co-form-title').textContent = live ? 'Pay with a different token' : 'Pay with';
+  $('#co-quote-btn').textContent = live ? 'Replace deposit instructions' : 'Get deposit instructions';
   renderPay(o, latest);
   renderHistory(o);
   document.title = `${o.status === 'paid' ? 'Paid' : 'Checkout'} · ${o.item.name} — Ferry`;
@@ -37,7 +42,9 @@ function renderPay(o, q) {
     kids.push(el('h3', {}, 'Send your payment'),
       el('ol', { class: 'steps' },
         el('li', {}, 'Send exactly ', el('b', { class: 'mono' }, `${q.amountInFormatted} ${q.originSymbol}`), ` on ${q.originChain}. This includes a small slippage buffer; the minimum accepted is ${q.minAmountInFormatted}. Any extra is refunded after the swap.`),
-        el('li', {}, 'to this one-time deposit address:', el('div', { class: 'copy', style: 'margin-top:8px' }, el('div', { class: 'mono' }, q.depositAddress), copyButton(q.depositAddress))),
+        el('li', {}, 'to this one-time deposit address:', el('div', { class: 'copy', style: 'margin-top:8px' }, el('div', { class: 'mono' }, q.depositAddress), copyButton(q.depositAddress)),
+          el('img', { class: 'qr', src: `/api/checkout/${secret}/qr/${q.id}.svg`, width: 184, height: 184, alt: `QR code of the deposit address ${q.depositAddress}` }),
+          el('p', { class: 'hint' }, 'The QR code contains only the address. Always check the amount and network in your wallet before sending.')),
         q.depositMemo ? el('li', {}, el('b', {}, 'Include this memo, or the deposit will fail:'), el('div', { class: 'copy', style: 'margin-top:8px' }, el('div', { class: 'mono' }, q.depositMemo), copyButton(q.depositMemo))) : null,
         el('li', {}, 'before the deadline: ', cd, '. After it passes, don\'t send. Request new instructions instead.')),
       el('p', { class: 'small muted' }, `Refunds go to ${q.refundTo}${q.refundFeeFormatted ? ` (refund fee about ${q.refundFeeFormatted} ${q.originSymbol})` : ''}. Estimated settlement time after confirmation: ${q.timeEstimateSec ?? '?'}s. Allow up to 15 minutes for cross-chain processing.`));
@@ -81,7 +88,9 @@ $('#co-asset').addEventListener('change', () => { const a = assets.find((x) => x
 $('#co-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('#co-quote-btn'); btn.disabled = true; $('#co-msg').textContent = 'Requesting an exact-output quote from NEAR Intents…';
-  try { render(await api(`/api/checkout/${secret}/quote`, { method: 'POST', body: { originAssetId: $('#co-asset').value, refundTo: $('#co-refund').value.trim() } })); $('#co-msg').textContent = ''; $('#co-pay').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  const replacing = !$('#co-replace').classList.contains('hidden');
+  if (replacing && !$('#co-replace-ok').checked) { $('#co-msg').textContent = 'Confirm you have not sent funds to the current deposit address first.'; btn.disabled = false; return; }
+  try { render(await api(`/api/checkout/${secret}/quote`, { method: 'POST', body: { originAssetId: $('#co-asset').value, refundTo: $('#co-refund').value.trim(), replace: replacing } })); $('#co-msg').textContent = ''; $('#co-pay').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   catch (err) { $('#co-msg').textContent = err.message; }
   btn.disabled = false; schedule();
 });

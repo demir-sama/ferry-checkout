@@ -12,7 +12,8 @@ server (Node, src/)
   oneclick.js   1Click client (tokens, quote, status); optional partner JWT
   tokens.js     live asset cache (5 min) + persisted fallback
   ai.js         NEAR AI client, DRAFT_SCHEMA, validateDraft(), approval flow
-  db.js         SQLite schema (merchants, sessions, products, orders, quotes, order_events, ai_drafts, kv)
+  db.js         async store: SQLite (local/tests) or Postgres via pg (Neon); one schema; DB-backed rate limits
+api/index.js    Vercel Function entry; vercel.json rewrites all routes here; daily cron → /api/cron/poll
 background poller: every 15 s refreshes orders with non-final quotes
 ```
 
@@ -20,10 +21,11 @@ background poller: every 15 s refreshes orders with non-final quotes
 - Order amount, asset and recipient are written once and never updated.
 - Secrets (merchant access keys, sessions, checkout secrets) are stored only as SHA-256 hashes.
 - `paid` can only be set by `refreshOrder()` after `verifySuccess()` passes.
+- Quote creation is single-flight per order through a DB lease (`quote_lock_until`). Replacing live instructions requires explicit buyer confirmation. Every quote stays polled after payment, so a second settlement sets `extra_payment`.
 - New quotes are refused while the order is processing, has an incomplete deposit, needs review, has expired or is paid. Each order is capped at 6 quotes.
 - The AI never receives the payout recipient, and its output never flows into payout, price, quote or status fields.
 
-## Hosting later (not done)
-- Single process with SQLite on a persistent disk works for a demo. For serverless hosting, port `db.js` to Postgres (for example, Neon's free tier) and run the poller as a cron job or queue.
-- Set `PUBLIC_BASE_URL` to the https origin so session cookies get `Secure`.
-- Webhooks: signed with HMAC-SHA256, sent only to https destinations the merchant has allowlisted and that resolve to public IPs (SSRF guard), with an idempotency key per event and exponential-backoff retries.
+## Hosting
+- Vercel (Node.js, Fluid Compute) with `DATABASE_URL` set to a dedicated Neon project's pooled URL. Run migrations with the direct URL (`npm run db:migrate`).
+- Production refuses SQLite, `FERRY_DEV`, and non-https upstream/base URLs.
+- Webhooks are intentionally not implemented. A future design: HMAC-SHA256 signatures, https destinations allowlisted by the merchant that resolve to public IPs, idempotency keys, and backoff retries.

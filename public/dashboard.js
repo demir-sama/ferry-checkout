@@ -73,7 +73,7 @@ async function loadOrders() {
   const { orders } = await api('/api/merchant/orders');
   $('#order-rows').replaceChildren(...(orders.length ? orders.map((o) => el('tr', {},
     el('td', {}, el('a', { href: '#', onclick: (e) => { e.preventDefault(); showOrder(o.id); } }, o.id)), el('td', {}, o.item), el('td', { class: 'mono' }, `${o.amount} ${o.symbol}`),
-    el('td', {}, el('span', { class: `pill ${statusTone(o.status)}` }, STATUS_LABEL[o.status] || o.status)), el('td', { class: 'small' }, fmtTime(o.createdAt)))) : [el('tr', {}, el('td', { colspan: 5, class: 'muted' }, 'No orders yet.'))]));
+    el('td', {}, el('span', { class: `pill ${statusTone(o.status)}` }, STATUS_LABEL[o.status] || o.status), o.extraPayment ? el('span', { class: 'pill bad', style: 'margin-left:6px' }, 'Extra payment') : null), el('td', { class: 'small' }, fmtTime(o.createdAt)))) : [el('tr', {}, el('td', { colspan: 5, class: 'muted' }, 'No orders yet.'))]));
 }
 $('#reload-orders').addEventListener('click', loadOrders);
 async function showOrder(id, refresh = false) {
@@ -81,6 +81,7 @@ async function showOrder(id, refresh = false) {
   const box = $('#order-detail'); box.classList.remove('hidden');
   box.replaceChildren(el('div', { class: 'row', style: 'justify-content:space-between' }, el('h3', {}, `${o.item.name} · ${o.amount.formatted} ${o.amount.symbol}`), el('button', { class: 'btn secondary small', type: 'button', onclick: () => showOrder(id, true) }, 'Check status now')),
     el('p', {}, el('span', { class: `pill ${statusTone(o.status)}` }, STATUS_LABEL[o.status] || o.status), ' ', o.statusNote || ''),
+    o.extraPayment ? el('p', { class: 'notice err' }, 'More than one deposit settled for this order. Refund the extra amount to the buyer from your payout wallet.') : null,
     el('p', { class: 'small muted' }, `Payout: ${o.amount.symbol} on ${o.amount.chain} → `, el('span', { class: 'mono' }, o.recipient)),
     el('h3', { style: 'margin-top:16px' }, 'Quotes'),
     o.quotes.length ? el('div', { class: 'table-wrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Pay with', 'Amount in', 'Deposit address', 'Remote status', 'Verified'].map((h) => el('th', {}, h)))),
@@ -103,7 +104,7 @@ async function loadDrafts() {
 }
 $('#ai-form').addEventListener('submit', async (e) => {
   e.preventDefault(); $('#ai-go').disabled = true; msg('#ai-msg', 'Asking NEAR AI Cloud…');
-  try { const { draft } = await api('/api/merchant/ai/drafts', { method: 'POST', body: { brief: $('#ai-brief').value } }); msg('#ai-msg', draft.validation.ok ? 'Draft ready for review.' : `The draft failed validation and was not applied: ${draft.validation.errors.join('; ')}`, draft.validation.ok ? 'ok' : 'err'); loadDrafts(); if (draft.validation.ok) review(draft); }
+  try { const { draft } = await api('/api/merchant/ai/drafts', { method: 'POST', body: { brief: $('#ai-brief').value } }); const u = draft.validation.usage; msg('#ai-msg', draft.validation.ok ? `Draft ready for review${u?.completionTokens ? ` (${u.promptTokens} + ${u.completionTokens} tokens)` : ''}.` : `The draft failed validation and was not applied: ${draft.validation.errors.join('; ')}`, draft.validation.ok ? 'ok' : 'err'); loadDrafts(); if (draft.validation.ok) review(draft); }
   catch (err) { msg('#ai-msg', err.message, 'err'); }
   $('#ai-go').disabled = !nearAi.configured;
 });
