@@ -51,6 +51,10 @@ test('deriveOrderStatus never reports paid without a verified SUCCESS', () => {
   assert.deepEqual(deriveOrderStatus(order, [{ id: 'q1', remote_status: 'SUCCESS', verified: true, deadline: future }]), { status: 'paid', paidQuoteId: 'q1' });
   assert.equal(deriveOrderStatus(order, [{ remote_status: 'REFUNDED', deadline: past }]).status, 'refunded');
   assert.equal(deriveOrderStatus({ ...order, expires_at: past }, []).status, 'expired');
+  assert.equal(deriveOrderStatus({ ...order, expires_at: past }, [{ remote_status: 'PROCESSING', deadline: past }]).status, 'processing');
+  assert.equal(deriveOrderStatus({ ...order, expires_at: past }, [{ remote_status: 'KNOWN_DEPOSIT_TX', deadline: past }]).status, 'processing');
+  assert.equal(deriveOrderStatus({ ...order, expires_at: past }, [{ remote_status: 'INCOMPLETE_DEPOSIT', deadline: past }]).status, 'incomplete_deposit');
+  assert.equal(deriveOrderStatus({ ...order, expires_at: past }, [{ remote_status: 'PENDING_DEPOSIT', deadline: future }]).status, 'awaiting_deposit');
 });
 
 test('AI draft validator is strict and deterministic', () => {

@@ -10,7 +10,7 @@
     var a = document.createElement('a');
     a.href = origin + '/p/' + id; a.target = node.getAttribute('data-ferry-target') || '_blank'; a.rel = 'noopener';
     a.textContent = node.getAttribute('data-ferry-label') || 'Pay with crypto';
-    a.style.cssText = 'display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border-radius:12px;background:#0E1A2B;color:#fff;font:600 15px system-ui,sans-serif;text-decoration:none;min-height:44px';
+    a.style.cssText = 'display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border-radius:12px;background:#1C222B;color:#F3EEE4;border:1px solid #3C4654;font:600 15px system-ui,sans-serif;text-decoration:none;min-height:44px';
     node.appendChild(a); node.setAttribute('data-ferry-mounted', '1');
   }
   function scan() { var n = document.querySelectorAll('[data-ferry-product]'); for (var i = 0; i < n.length; i++) mount(n[i]); }

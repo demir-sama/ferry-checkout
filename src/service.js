@@ -5,6 +5,8 @@ import { parseUnits, formatUnits, isBaseUnitString } from './amounts.js';
 import { validateAddress, canBePayoutChain } from './addresses.js';
 import { verifySuccess, deriveOrderStatus, BLOCKS_NEW_QUOTE } from './reconcile.js';
 import { REMOTE_STATUSES } from './oneclick.js';
+import { diagnoseOrder, caseFacts } from './diagnose.js';
+import { toCsv, RECONCILE_HEADERS } from './csv.js';
 
 export class HttpError extends Error { constructor(status, message, code) { super(message); this.status = status; this.code = code; } }
 export const MAX_QUOTES_PER_ORDER = 6;
@@ -115,20 +117,35 @@ export function createService({ db, cfg, oneClick, tokens, log = () => {} }) {
 
   function quoteView(q) {
     const dec = Number(q.origin_decimals);
+    const detail = j(q.remote_detail, null);
+    const knownAmount = (v) => (isBaseUnitString(v) ? { known: true, base: v, formatted: formatUnits(v, dec) } : { known: false, base: null, formatted: null });
     return { id: q.id, originAssetId: q.origin_asset_id, originSymbol: q.origin_symbol, originChain: q.origin_chain, depositAddress: q.deposit_address, depositMemo: q.deposit_memo,
       amountIn: q.amount_in, amountInFormatted: formatUnits(q.amount_in, dec), minAmountIn: q.min_amount_in, minAmountInFormatted: formatUnits(q.min_amount_in, dec),
       refundTo: q.refund_to, refundFeeFormatted: q.refund_fee && isBaseUnitString(q.refund_fee) ? formatUnits(q.refund_fee, dec) : null,
       deadline: q.deadline, live: q.remote_status === 'PENDING_DEPOSIT' && Date.parse(q.deadline) > Date.now(), timeEstimateSec: q.time_estimate == null ? null : Number(q.time_estimate),
-      remoteStatus: q.remote_status, verified: q.verified == null ? null : !!Number(q.verified), detail: j(q.remote_detail, null), createdAt: q.created_at, lastPolledAt: q.last_polled_at };
+      remoteStatus: q.remote_status, verified: q.verified == null ? null : !!Number(q.verified), correlationId: q.correlation_id || null, detail, createdAt: q.created_at, lastPolledAt: q.last_polled_at,
+      evidence: { correlationId: q.correlation_id || null, statusCorrelationId: typeof detail?.statusCorrelationId === 'string' ? detail.statusCorrelationId : null,
+        providerUpdatedAt: typeof detail?.updatedAt === 'string' ? detail.updatedAt : null,
+        pollError: typeof detail?.lastPollError === 'string' ? detail.lastPollError : null, pollFailedAt: detail?.lastPollFailedAt || null,
+        deposited: knownAmount(detail?.depositedAmount), settledOut: knownAmount(detail?.amountOut), refunded: knownAmount(detail?.refundedAmount),
+        refundReason: typeof detail?.refundReason === 'string' ? detail.refundReason : null } };
   }
+  function eventView(e) { return { id: e.id, kind: e.kind, detail: j(e.detail, {}), at: e.at }; }
   async function orderView(o, { forMerchant = false } = {}) {
     const m = await getMerchant(o.merchant_id);
     const dec = Number(o.dest_decimals);
+    const quoteRows = await quotesFor(o.id);
     const v = { id: o.id, status: o.status, statusNote: o.status_note, extraPayment: !!Number(o.extra_payment), item: { name: o.item_name, description: o.item_description },
       amount: { base: o.amount_out_base, formatted: formatUnits(o.amount_out_base, dec), symbol: o.dest_symbol, chain: o.dest_chain, assetId: o.dest_asset_id, decimals: dec },
       recipient: o.recipient, merchant: { name: m.name, profile: j(m.profile, {}), isSample: !!Number(m.is_sample) }, acceptedAssets: j(o.accepted_assets, []),
-      createdAt: o.created_at, expiresAt: o.expires_at, updatedAt: o.updated_at, paidQuoteId: o.paid_quote_id, quotes: (await quotesFor(o.id)).map(quoteView) };
-    if (forMerchant) v.events = (await db.all('SELECT kind, detail, at FROM order_events WHERE order_id=? ORDER BY id', [o.id])).map((e) => ({ kind: e.kind, detail: j(e.detail, {}), at: e.at }));
+      createdAt: o.created_at, expiresAt: o.expires_at, updatedAt: o.updated_at, paidQuoteId: o.paid_quote_id, quotes: quoteRows.map(quoteView) };
+    if (forMerchant) {
+      const events = (await db.all('SELECT id, kind, detail, at FROM order_events WHERE order_id=? ORDER BY id', [o.id])).map(eventView);
+      v.events = events;
+      v.diagnosis = diagnoseOrder(o, quoteRows);
+      v.notes = events.filter((e) => e.kind === 'resolution_note').map((e) => ({ id: e.detail.noteId || `event:${e.id}`, body: typeof e.detail.body === 'string' ? e.detail.body : '', at: e.at }));
+      v.narratives = events.filter((e) => e.kind === 'ai_narrative').map((e) => ({ id: e.detail.narrativeId || `event:${e.id}`, status: e.detail.status || 'invalid', model: e.detail.model || null, at: e.at, factsDigest: e.detail.factsDigest || null, narrative: e.detail.status === 'stored' ? e.detail.narrative : null, errors: e.detail.errors || [], refreshFailed: !!e.detail.refreshFailed }));
+    }
     return v;
   }
 
@@ -198,14 +215,26 @@ export function createService({ db, cfg, oneClick, tokens, log = () => {} }) {
       if (q.remote_status === 'PENDING_DEPOSIT' && Date.now() > Date.parse(q.deadline) + 6 * 3600e3) continue;
       let s;
       try { s = await oneClick.status(q.deposit_address, q.deposit_memo); }
-      catch (e) { await db.run('UPDATE quotes SET last_polled_at=? WHERE id=?', [now(), q.id]); if (e.status !== 404) log('status error', q.id, e.message); continue; }
+      catch (e) {
+        const prev = j(q.remote_detail, {}) || {};
+        const message = clean(e.message || 'status request failed', 240);
+        await db.run('UPDATE quotes SET last_polled_at=?, remote_detail=? WHERE id=?', [now(), JSON.stringify({ ...prev, lastPollError: message, lastPollFailedAt: now() }), q.id]);
+        if (e.status !== 404) log('status error', q.id, e.message);
+        continue;
+      }
       const remote = REMOTE_STATUSES.includes(s?.status) ? s.status : null;
-      if (!remote) { log('unknown status', s?.status); continue; }
+      if (!remote) {
+        const prev = j(q.remote_detail, {}) || {};
+        await db.run('UPDATE quotes SET last_polled_at=?, remote_detail=? WHERE id=?', [now(), JSON.stringify({ ...prev, lastPollError: `unrecognised provider status: ${clean(s?.status, 40)}`, lastPollFailedAt: now() }), q.id]);
+        log('unknown status', s?.status);
+        continue;
+      }
       let verified = null, problems = null;
       if (remote === 'SUCCESS') { const v = verifySuccess(o, q, s); verified = v.ok ? 1 : 0; problems = v.problems; }
       const sd = s.swapDetails || {};
       const txs = (a) => (Array.isArray(a) ? a : []).slice(0, 5).filter((t) => t && typeof t.hash === 'string').map((t) => ({ hash: t.hash.slice(0, 140), explorerUrl: typeof t.explorerUrl === 'string' && /^https:\/\//.test(t.explorerUrl) ? t.explorerUrl.slice(0, 300) : null }));
-      const detail = { updatedAt: s.updatedAt ?? null, depositedAmount: isBaseUnitString(sd.depositedAmount) ? sd.depositedAmount : null, amountOut: isBaseUnitString(sd.amountOut) ? sd.amountOut : null,
+      const detail = { updatedAt: typeof s.updatedAt === 'string' ? s.updatedAt : null, statusCorrelationId: typeof s.correlationId === 'string' ? s.correlationId.slice(0, 80) : null,
+        depositedAmount: isBaseUnitString(sd.depositedAmount) ? sd.depositedAmount : null, amountOut: isBaseUnitString(sd.amountOut) ? sd.amountOut : null,
         refundedAmount: isBaseUnitString(sd.refundedAmount) ? sd.refundedAmount : null, refundReason: typeof sd.refundReason === 'string' ? sd.refundReason.slice(0, 200) : null,
         originChainTxs: txs(sd.originChainTxHashes), destinationChainTxs: txs(sd.destinationChainTxHashes), nearTxHashes: (sd.nearTxHashes || []).slice(0, 5).map(String) };
       await db.tx(async (x) => {
@@ -237,8 +266,64 @@ export function createService({ db, cfg, oneClick, tokens, log = () => {} }) {
     const q = await db.get('SELECT * FROM quotes WHERE id=? AND order_id=?', [quoteId, o.id]); if (!q) throw new HttpError(404, 'Quote not found');
     return q;
   }
-  const listOrders = async (merchantId) => (await db.all('SELECT * FROM orders WHERE merchant_id=? ORDER BY created_at DESC LIMIT 200', [merchantId]))
-    .map((o) => ({ id: o.id, status: o.status, extraPayment: !!Number(o.extra_payment), item: o.item_name, amount: formatUnits(o.amount_out_base, Number(o.dest_decimals)), symbol: o.dest_symbol, chain: o.dest_chain, createdAt: o.created_at, updatedAt: o.updated_at }));
+  async function listOrders(merchantId) {
+    const rows = await db.all('SELECT * FROM orders WHERE merchant_id=? ORDER BY created_at DESC LIMIT 200', [merchantId]);
+    const out = [];
+    for (const o of rows) {
+      const qs = await quotesFor(o.id);
+      const d = diagnoseOrder(o, qs);
+      out.push({ id: o.id, status: o.status, lane: d.lane, freshness: d.freshness.state, extraPayment: !!Number(o.extra_payment), item: o.item_name,
+        amount: formatUnits(o.amount_out_base, Number(o.dest_decimals)), symbol: o.dest_symbol, chain: o.dest_chain, createdAt: o.created_at, updatedAt: o.updated_at,
+        attention: d.findings.filter((f) => f.severity === 'attention').map((f) => f.title) });
+    }
+    return out;
+  }
+  async function addResolutionNote(merchantId, orderId, body) {
+    if (typeof body !== 'string') throw new HttpError(400, 'Note must be text');
+    const text = clean(body, 2000);
+    if (!text) throw new HttpError(400, 'Write a resolution note');
+    const o = await db.get('SELECT id, status, amount_out_base, recipient FROM orders WHERE id=? AND merchant_id=?', [orderId, merchantId]);
+    if (!o) throw new HttpError(404, 'Order not found');
+    const noteId = randomId('nte', 9);
+    await db.tx(async (x) => { await event(x, orderId, 'resolution_note', { noteId, body: text }); });
+    const after = await getOrder(orderId);
+    return { id: noteId, body: text, createdAt: now(), status: after.status, amountBase: after.amount_out_base, recipient: after.recipient };
+  }
+  async function caseEvidence(merchantId, orderId, { refresh = false } = {}) {
+    let o = await db.get('SELECT * FROM orders WHERE id=? AND merchant_id=?', [orderId, merchantId]);
+    if (!o) throw new HttpError(404, 'Order not found');
+    if (refresh) o = await refreshOrder(o.id, { force: true });
+    const quotes = await quotesFor(o.id);
+    const events = await db.all('SELECT id, kind, detail, at FROM order_events WHERE order_id=? ORDER BY id', [o.id]);
+    const diagnosis = diagnoseOrder(o, quotes);
+    return { order: o, quotes, events, diagnosis, ...caseFacts({ order: o, quotes, events, diagnosis, refreshAttempted: refresh }) };
+  }
+  async function recordNarrative(orderId, detail) {
+    await event(db, orderId, 'ai_narrative', detail);
+  }
+  async function reconciliationCsv(merchantId) {
+    const rows = await db.all('SELECT * FROM orders WHERE merchant_id=? ORDER BY created_at ASC LIMIT 200', [merchantId]);
+    const out = [];
+    const amountCell = (v) => (isBaseUnitString(v) ? v : 'UNKNOWN');
+    for (const o of rows) {
+      const qs = await quotesFor(o.id);
+      const d = diagnoseOrder(o, qs);
+      const base = { order_id: o.id, created_at: o.created_at, item: o.item_name, stored_status: o.status, lane: d.lane, amount_base: o.amount_out_base,
+        symbol: o.dest_symbol, chain: o.dest_chain, extra_payment: d.extraPayment ? 'yes' : 'no',
+        finding_ids: d.findings.filter((f) => f.severity === 'attention').map((f) => f.id).join(' '), unknown_fields: [...new Set(d.unknowns.map((u) => u.field))].join(' ') };
+      if (!qs.length) { out.push(base); continue; }
+      for (const q of qs) {
+        const detail = j(q.remote_detail, {}) || {};
+        out.push({ ...base, quote_id: q.id, remote_status: q.remote_status, verified: q.verified == null ? 'UNKNOWN' : (Number(q.verified) ? 'yes' : 'no'),
+          amount_in_base: q.amount_in, min_amount_in_base: q.min_amount_in, deposited_amount: amountCell(detail.depositedAmount), amount_out: amountCell(detail.amountOut),
+          refunded_amount: amountCell(detail.refundedAmount), refund_reason: typeof detail.refundReason === 'string' ? detail.refundReason : 'UNKNOWN',
+          provider_updated_at: typeof detail.updatedAt === 'string' ? detail.updatedAt : 'UNKNOWN', last_polled_at: q.last_polled_at || 'UNKNOWN',
+          poll_error: typeof detail.lastPollError === 'string' ? detail.lastPollError : '', correlation_id: q.correlation_id || 'UNKNOWN',
+          deposit_address: q.deposit_address, deposit_memo: q.deposit_memo || '' });
+      }
+    }
+    return toCsv(RECONCILE_HEADERS, out);
+  }
   async function merchantOrder(merchantId, orderId, { refresh = false } = {}) {
     let o = await db.get('SELECT * FROM orders WHERE id=? AND merchant_id=?', [orderId, merchantId]);
     if (!o) throw new HttpError(404, 'Order not found');
@@ -252,7 +337,8 @@ export function createService({ db, cfg, oneClick, tokens, log = () => {} }) {
   }
 
   return { createMerchant, getMerchant, merchantView, updateSettings, setProfile, createProduct, listProducts, setProductActive, publicProduct, priceToBase,
-    createOrderForProduct, createInvoice, createQuote, refreshOrder, checkoutStatus, checkoutView, checkoutQuote, listOrders, merchantOrder, pollActive, orderBySecret };
+    createOrderForProduct, createInvoice, createQuote, refreshOrder, checkoutStatus, checkoutView, checkoutQuote, listOrders, merchantOrder, pollActive, orderBySecret,
+    addResolutionNote, caseEvidence, recordNarrative, reconciliationCsv };
 }
 
 // Validates a /v0/quote response against the request we sent (OpenAPI QuoteResponse/Quote shapes).

@@ -65,3 +65,34 @@ test('checkout refuses a malformed refund address in the browser before any quot
   input.value = '0x2527D02599Ba641c19FEa793cD0F167589a0f10D'; input.dispatchEvent(new Event('input'));
   assert.equal(input.getAttribute('aria-invalid'), null);
 });
+
+test('dashboard keeps five tabs and the orders table can stack on a narrow screen', () => {
+  const html = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
+  const js = readFileSync(new URL('../public/dashboard.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  assert.equal(html.match(/role="tab"/g).length, 5);
+  assert.match(html, /data-tab="orders"/);
+  assert.match(html, /class="stack"/);
+  assert.match(js, /data-label': 'Status'/);
+  assert.match(js, /data-label': 'Created'/);
+  assert.match(js, /Deterministic rules/);
+  assert.match(css, /max-width:840px/);
+  assert.match(css, /overflow-x:clip/);
+  const checkout = readFileSync(new URL('../public/checkout.js', import.meta.url), 'utf8');
+  assert.match(checkout, /minAmountIn/);
+  assert.doesNotMatch(checkout, /Any extra is refunded/);
+  assert.match(checkout, /does not promise a late refund/);
+});
+
+test('simulated card is marked SIMULATED and does not print null', async () => {
+  browser('demo-store.html', 'https://ferry.test/demo-store', () => ({ status: 200, body: { simulated: true, cases: [] } }));
+  const { renderSimCard } = await fresh('case-view.js');
+  const node = renderSimCard({ title: 'Buffer', teaches: 'Inside the buffer.', diagnosis: { lane: 'processing', findings: [{ severity: 'info', title: 'Buffer', detail: 'Not a shortfall.' }] } });
+  document.body.append(node);
+  assert.match(node.textContent, /SIMULATED/);
+  assert.match(node.textContent, /Not a live settlement/);
+  assert.doesNotMatch(node.textContent, /null|undefined/);
+  const empty = renderSimCard({ title: 'Bare', diagnosis: { findings: [null, { severity: 'attention', title: 'Late', detail: 'Funds may be lost.' }] } });
+  assert.doesNotMatch(empty.textContent, /null|undefined/);
+  assert.match(empty.textContent, /Late/);
+});

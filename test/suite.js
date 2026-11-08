@@ -259,6 +259,142 @@ export function defineSuite(label, getOpts) {
     } finally { await t2.close(); }
   });
 
+  test(`[${label}] inbox evidence: provenance, unknowns, contradictions, stale refresh, notes, CSV, isolation`, async () => {
+    const t = await boot();
+    try {
+      const { accessKey: keyA } = await t.rt.service.createMerchant({ name: 'Store A' });
+      assert.equal((await t.req('/api/auth/login', { method: 'POST', body: { accessKey: keyA } })).status, 200);
+      assert.equal((await t.req('/api/merchant', { method: 'PUT', body: { payoutAssetId: USDC_NEAR, payoutRecipient: 'ferry-sample.near' } })).status, 200);
+      const inv = await t.req('/api/merchant/orders', { method: 'POST', body: { title: '=1+1', description: 'note', amount: '2' } });
+      assert.equal(inv.status, 201, JSON.stringify(inv.data));
+      const listed = await t.req('/api/merchant/orders');
+      const orderA = listed.data.orders.find((o) => o.item === '=1+1');
+      assert.equal(orderA.lane, 'open');
+      const created = await t.req('/api/merchant/orders', { method: 'POST', body: { title: 'Notebook', description: '', amount: '2' } });
+      const checkoutUrl = created.data.checkoutUrl;
+      const sec = checkoutUrl.split('/').pop();
+      const q = await quote(t, sec);
+      assert.equal(q.status, 201, JSON.stringify(q.data));
+      const stored = await t.rt.db.get('SELECT raw, signature, correlation_id, amount_in, min_amount_in FROM quotes WHERE id=?', [q.data.quotes[0].id]);
+      const raw = JSON.parse(stored.raw);
+      assert.equal(raw.signature, stored.signature);
+      assert.equal(raw.correlationId, stored.correlation_id);
+      assert.ok(BigInt(stored.amount_in) > BigInt(stored.min_amount_in));
+      const dep = q.data.quotes[0].depositAddress;
+      const mid = ((BigInt(q.data.quotes[0].minAmountIn) + BigInt(q.data.quotes[0].amountIn)) / 2n).toString();
+      t.fake.state.omitUpdatedAt = true;
+      t.fake.setStatus(dep, { status: 'PROCESSING', swapDetails: { depositedAmount: mid } });
+      await t.rt.service.refreshOrder(q.data.id, { force: true });
+      let view = await t.req(`/api/merchant/orders/${q.data.id}`);
+      assert.equal(view.data.status, 'processing');
+      assert.equal(view.data.quotes[0].evidence.deposited.known, true);
+      assert.equal(view.data.quotes[0].evidence.providerUpdatedAt, null);
+      assert.equal(view.data.quotes[0].evidence.settledOut.known, false);
+      assert.ok(view.data.diagnosis.findings.some((f) => f.id === 'within_buffer'));
+      assert.ok(!view.data.diagnosis.findings.some((f) => f.id === 'below_minimum'));
+      assert.equal(view.data.diagnosis.changesPaymentState, false);
+      assert.equal(view.data.diagnosis.label.includes('Deterministic rules'), true);
+      t.fake.state.omitUpdatedAt = false;
+      t.fake.setStatus(dep, { status: 'SUCCESS', swapDetails: { amountOut: '2000000', depositedAmount: '1000' } });
+      await t.rt.service.refreshOrder(q.data.id, { force: true });
+      view = await t.req(`/api/merchant/orders/${q.data.id}`);
+      assert.equal(view.data.status, 'paid');
+      assert.equal(view.data.diagnosis.lane, 'attention');
+      assert.ok(view.data.diagnosis.findings.some((f) => f.id === 'contradictory_deposit'));
+      assert.ok(view.data.diagnosis.unknowns.every((u) => u.value === 'UNKNOWN'));
+      const before = view.data.status;
+      const note = await t.req(`/api/merchant/orders/${q.data.id}/notes`, { method: 'POST', body: { body: 'Reviewed the mismatch. No refund sent.', status: 'refunded', executeRefund: true } });
+      assert.equal(note.status, 201, JSON.stringify(note.data));
+      assert.equal(note.data.note.status, before);
+      view = await t.req(`/api/merchant/orders/${q.data.id}`);
+      assert.equal(view.data.status, 'paid');
+      assert.equal(view.data.amount.base, '2000000');
+      assert.equal(view.data.notes.at(-1).body, 'Reviewed the mismatch. No refund sent.');
+      const otherSecret = await newCheckout(t, (await t.req('/api/merchant/products', { method: 'POST', body: { name: 'Second', price: '2' } })).data.product);
+      const q2 = await quote(t, otherSecret);
+      t.fake.state.statusHttp = 503;
+      await t.rt.service.refreshOrder(q2.data.id, { force: true });
+      const failed = await t.req(`/api/merchant/orders/${q2.data.id}`);
+      assert.equal(failed.data.quotes[0].remoteStatus, 'PENDING_DEPOSIT');
+      assert.equal(failed.data.diagnosis.freshness.state, 'refresh_failed');
+      assert.match(failed.data.quotes[0].evidence.pollError, /503|outage|status/i);
+      assert.equal(failed.data.status, 'awaiting_deposit');
+      await t.rt.db.run('UPDATE quotes SET last_polled_at=?, remote_detail=? WHERE id=?', ['2020-01-01T00:00:00.000Z', '{}', q2.data.quotes[0].id]);
+      const stale = await t.req(`/api/merchant/orders/${q2.data.id}`);
+      assert.equal(stale.data.diagnosis.freshness.state, 'stale');
+      assert.equal(stale.data.diagnosis.lane, 'attention');
+      const csv = await t.req('/api/merchant/reconciliation.csv', { raw: true });
+      assert.equal(csv.status, 200);
+      assert.match(csv.headers.get('content-type'), /text\/csv/);
+      assert.match(csv.text, /'=1\+1/);
+      assert.doesNotMatch(csv.text, /(^|,|\n)=1\+1/);
+      assert.match(csv.text, /UNKNOWN/);
+      assert.doesNotMatch(csv.text, /ferry-sample\.near/); // payout recipient is not a CSV column
+      const sim = await t.req('/api/simulated-cases');
+      assert.equal(sim.data.simulated, true);
+      assert.equal(sim.data.liveSettlement, false);
+      assert.ok(sim.data.cases.every((c) => c.label === 'SIMULATED' && c.liveSettlement === false));
+      assert.equal(sim.data.cases.find((c) => c.id === 'sim-unknown-partial').diagnosis.quotes[0].comparison.shortfallBase, null);
+      assert.equal((await t.req('/api/merchant/orders')).data.orders.some((o) => String(o.id).startsWith('ord_simulated')), false);
+      const keyBmerchant = await t.rt.service.createMerchant({ name: 'Store B' });
+      assert.equal((await t.req('/api/auth/logout', { method: 'POST' })).status, 200);
+      assert.equal((await t.req('/api/auth/login', { method: 'POST', body: { accessKey: keyBmerchant.accessKey } })).status, 200);
+      assert.equal((await t.req(`/api/merchant/orders/${q.data.id}`)).status, 404);
+      assert.equal((await t.req(`/api/merchant/orders/${q.data.id}/notes`, { method: 'POST', body: { body: 'stolen note' } })).status, 404);
+      assert.equal((await t.req(`/api/merchant/orders/${q.data.id}/explain`, { method: 'POST', body: {} })).status, 404);
+      const csvB = await t.req('/api/merchant/reconciliation.csv', { raw: true });
+      assert.doesNotMatch(csvB.text, new RegExp(q.data.id));
+      assert.equal((await t.req('/api/merchant/orders/ord_nope/explain', { method: 'POST', body: {} })).status, 404);
+    } finally { await t.close(); }
+  });
+
+  test(`[${label}] NEAR AI order narrative cannot act, and a failed refresh must be admitted`, async () => {
+    const fake = fakeOneClick();
+    const t = await boot({ aiKey: 'sample-key-not-real', fake });
+    try {
+      const prod = await merchantWithProduct(t);
+      const secret = await newCheckout(t, prod);
+      const q = await quote(t, secret);
+      const id = q.data.id;
+      const evidenceId = `quote:${q.data.quotes[0].id}`;
+      fake.state.statusHttp = 503;
+      fake.state.aiNarrative = { summary: 'Everything is confirmed and settled.', evidenceCited: [evidenceId], unknowns: ['none'], suggestedReviewStep: 'No action.' };
+      const bad = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+      assert.equal(bad.status, 200, JSON.stringify(bad.data));
+      assert.equal(bad.data.explanation.status, 'invalid');
+      assert.match(bad.data.explanation.errors.join(' '), /refresh/);
+      assert.equal(bad.data.unchanged, true);
+      assert.equal((await t.req(`/api/merchant/orders/${id}`)).data.status, 'awaiting_deposit');
+      const sent = JSON.parse(fake.calls.filter((c) => c.path === '/v1/chat/completions').at(-1).body);
+      assert.equal(sent.response_format.json_schema.name, 'ferry_case_narrative');
+      assert.equal(sent.response_format.json_schema.strict, true);
+      assert.equal(sent.tools, undefined);
+      assert.equal(sent.chat_template_kwargs.enable_thinking, false);
+      assert.doesNotMatch(sent.messages[1].content, /ferry-sample\.near/);
+      assert.doesNotMatch(JSON.stringify(sent.messages), new RegExp(EVM));
+      fake.state.aiNarrative = { ...fake.state.aiNarrative, summary: 'Status could not be refreshed. Review the stored quote only.', executeRefund: true, setStatus: 'paid' };
+      const acted = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+      assert.equal(acted.data.explanation.status, 'invalid');
+      assert.match(acted.data.explanation.errors.join(' '), /executeRefund|forbidden|unexpected/);
+      assert.equal((await t.req(`/api/merchant/orders/${id}`)).data.status, 'awaiting_deposit');
+      fake.state.aiNarrative = { summary: 'Status could not be refreshed.', evidenceCited: ['quote:forged'], unknowns: ['deposited amount unknown'], suggestedReviewStep: 'Read the stored quote. Do not send a refund from here.' };
+      const forged = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+      assert.equal(forged.data.explanation.status, 'invalid');
+      assert.match(forged.data.explanation.errors.join(' '), /evidence/);
+      fake.state.aiNarrative = { summary: 'The status refresh failed, so this is not a fresh confirmation. Deposited amount is unknown.', evidenceCited: [evidenceId, `order:${id}`], unknowns: ['depositedAmount was not reported'], suggestedReviewStep: 'Review the stored quote and do not send a refund from Ferry.' };
+      const ok = await t.req(`/api/merchant/orders/${id}/explain`, { method: 'POST', body: {} });
+      assert.equal(ok.data.explanation.status, 'stored', JSON.stringify(ok.data));
+      assert.equal(ok.data.explanation.authority, 'none');
+      assert.equal(ok.data.unchanged, true);
+      const after = await t.req(`/api/merchant/orders/${id}`);
+      assert.equal(after.data.status, 'awaiting_deposit');
+      assert.equal(after.data.amount.base, '2000000');
+      assert.equal(after.data.recipient, 'ferry-sample.near');
+      assert.equal(after.data.narratives.at(-1).narrative.summary.includes('refresh'), true);
+      assert.equal((await t.req('/api/merchant')).data.merchant.payout.recipient, 'ferry-sample.near');
+    } finally { await t.close(); }
+  });
+
   test(`[${label}] rate limits are enforced from the database`, async () => {
     const t = await boot();
     try {

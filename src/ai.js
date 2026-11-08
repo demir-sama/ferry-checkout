@@ -1,12 +1,24 @@
 // NEAR AI Cloud setup assistant. The model only drafts storefront copy and suggests accepted assets.
 // It never sees or sets payout destination, prices, quotes or payment status. Every draft is validated
 // deterministically and applied only after the merchant approves specific fields.
-import { randomId } from './ids.js';
+import { randomId, sha256 } from './ids.js';
 import { now } from './db.js';
 import { HttpError } from './service.js';
 
 export const ACCENTS = ['ocean', 'ember', 'moss', 'violet', 'graphite', 'gold'];
-const FORBIDDEN_KEY = /recipient|payout|wallet|address|price|amount|deposit|status|paid|refund|transfer|private.?key|secret/i;
+const FORBIDDEN_KEY = /recipient|payout|wallet|address|price|amount|deposit|status|paid|refund|transfer|private.?key|secret|sign|execute|message/i;
+
+// Case narrative. Separate from storefront copy. No field here can change a payment.
+export const NARRATIVE_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['summary', 'evidenceCited', 'unknowns', 'suggestedReviewStep'],
+  properties: {
+    summary: { type: 'string', maxLength: 600 },
+    evidenceCited: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 80 } },
+    unknowns: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 200 } },
+    suggestedReviewStep: { type: 'string', maxLength: 400 },
+  },
+};
 
 // JSON Schema sent to NEAR AI as response_format (strict). Mirrors validateDraft below.
 export const DRAFT_SCHEMA = {
@@ -65,39 +77,72 @@ export function validateDraft(raw, { liveAssetIds }) {
   } };
 }
 
+// Rejects anything that is not a citation-backed explanation. Evidence ids must be ones Ferry supplied.
+export function validateNarrative(raw, { evidenceIds, refreshFailed = false } = {}) {
+  const errors = [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, errors: ['narrative is not an object'], value: null };
+  const walk = (o, p) => { for (const [k, v] of Object.entries(o)) { if (FORBIDDEN_KEY.test(k)) errors.push(`forbidden field "${p}${k}"`); if (v && typeof v === 'object') walk(v, `${p}${k}.`); } };
+  walk(raw, '');
+  const allowed = new Set(Object.keys(NARRATIVE_SCHEMA.properties));
+  for (const k of Object.keys(raw)) if (!allowed.has(k)) errors.push(`unexpected field "${k}"`);
+  for (const k of NARRATIVE_SCHEMA.required) if (!(k in raw)) errors.push(`missing field "${k}"`);
+  const text = (k, max) => { if (k in raw && !(isStr(raw[k], max) && noMarkup(raw[k]))) errors.push(`"${k}" must be plain text up to ${max} characters`); };
+  text('summary', 600); text('suggestedReviewStep', 400);
+  const known = new Set(evidenceIds || []);
+  if (!Array.isArray(raw.evidenceCited) || raw.evidenceCited.length < 1 || raw.evidenceCited.length > 12) errors.push('"evidenceCited" must list 1 to 12 evidence ids');
+  else raw.evidenceCited.forEach((id, i) => { if (typeof id !== 'string' || !known.has(id)) errors.push(`evidenceCited[${i}] is not an evidence id Ferry supplied`); });
+  if (!Array.isArray(raw.unknowns) || raw.unknowns.length > 8) errors.push('"unknowns" must be a list of at most 8 strings');
+  else raw.unknowns.forEach((u, i) => { if (!(isStr(u, 200) && noMarkup(u))) errors.push(`unknowns[${i}] must be plain text up to 200 characters`); });
+  if (refreshFailed && typeof raw.summary === 'string' && !/refresh|not rechecked|could not|failed to refresh|unavailable/i.test(raw.summary)) errors.push('summary must say the status refresh failed');
+  if (errors.length) return { ok: false, errors, value: null };
+  return { ok: true, errors: [], value: { summary: raw.summary.trim(), evidenceCited: [...new Set(raw.evidenceCited)], unknowns: raw.unknowns.map((u) => u.trim()), suggestedReviewStep: raw.suggestedReviewStep.trim() } };
+}
+
 export function createNearAi({ baseUrl, apiKey, model, maxTokens = 1500, fetchImpl = fetch, timeoutMs = 60000 }) {
+  async function complete(body, noun) {
+    if (!apiKey) throw new HttpError(503, `NEAR AI is not configured on this server (NEAR_AI_API_KEY is unset). No ${noun} was generated.`, 'NEAR_AI_NOT_CONFIGURED');
+    let res;
+    try {
+      res = await fetchImpl(`${baseUrl}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+    } catch (e) { throw new HttpError(502, `NEAR AI request failed: ${e.message}`, 'NEAR_AI_UNREACHABLE'); }
+    const text = await res.text();
+    if (!res.ok) {
+      const hint = res.status === 402 ? ' (credits required)' : res.status === 401 ? ' (API key rejected)' : res.status === 429 ? ' (rate limited)' : res.status >= 500 ? ' (model temporarily unavailable)' : '';
+      throw new HttpError(502, `NEAR AI returned HTTP ${res.status}${hint}. No ${noun} was generated.`, res.status === 401 || res.status === 403 ? 'NEAR_AI_AUTH' : 'NEAR_AI_ERROR');
+    }
+    let parsed; try { parsed = JSON.parse(text); } catch { throw new HttpError(502, 'NEAR AI response was not JSON', 'NEAR_AI_ERROR'); }
+    const choice = parsed?.choices?.[0] || {};
+    const content = choice.message?.content;
+    const u = parsed?.usage || {};
+    const usage = { promptTokens: u.prompt_tokens ?? null, completionTokens: u.completion_tokens ?? null, reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? u.reasoning_tokens ?? null };
+    if (choice.finish_reason === 'length') throw new HttpError(502, `NEAR AI stopped at the token limit before finishing the ${noun} (${usage.completionTokens ?? '?'} tokens). No ${noun} was generated.`, 'NEAR_AI_TRUNCATED');
+    let json; try { json = JSON.parse(content); } catch { json = null; }
+    return { json, rawContent: typeof content === 'string' ? content.slice(0, 8000) : null, responseId: parsed?.id || null, model: parsed?.model || model, finishReason: choice.finish_reason ?? null, usage };
+  }
+  const thinkingOff = { enable_thinking: false };
   return {
     configured: Boolean(apiKey), model, baseUrl,
     async draft({ brief, storeName, assetMenu }) {
-      if (!apiKey) throw new HttpError(503, 'NEAR AI is not configured on this server (NEAR_AI_API_KEY is unset). No draft was generated.', 'NEAR_AI_NOT_CONFIGURED');
-      const body = {
-        model, temperature: 0.3, max_tokens: maxTokens,
-        // NEAR AI docs (cloud/reasoning-models): Qwen-family TEE models reason by default; disable it so the
-        // completion budget goes to the JSON answer instead of hidden reasoning.
-        chat_template_kwargs: { enable_thinking: false },
+      const out = await complete({
+        model, temperature: 0.3, max_tokens: maxTokens, chat_template_kwargs: thinkingOff,
         response_format: { type: 'json_schema', json_schema: { name: 'ferry_store_draft', strict: true, schema: DRAFT_SCHEMA } },
         messages: [
           { role: 'system', content: 'You draft storefront copy for a crypto checkout page. Output only JSON matching the schema. You do not set prices, wallets, addresses, payouts or payment status; never mention specific prices. suggestedAssetIds must be chosen only from the provided asset menu ids. Keep copy factual; do not promise anything about chains or fees.' },
           { role: 'user', content: `Store name: ${storeName}\nMerchant brief:\n${brief}\n\nAsset menu (id | symbol | chain):\n${assetMenu}` },
         ],
-      };
-      let res;
-      try {
-        res = await fetchImpl(`${baseUrl}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
-      } catch (e) { throw new HttpError(502, `NEAR AI request failed: ${e.message}`, 'NEAR_AI_UNREACHABLE'); }
-      const text = await res.text();
-      if (!res.ok) {
-        const hint = res.status === 402 ? ' (credits required)' : res.status === 401 ? ' (API key rejected)' : res.status === 429 ? ' (rate limited)' : res.status >= 500 ? ' (model temporarily unavailable)' : '';
-        throw new HttpError(502, `NEAR AI returned HTTP ${res.status}${hint}. No draft was generated.`, res.status === 401 || res.status === 403 ? 'NEAR_AI_AUTH' : 'NEAR_AI_ERROR');
-      }
-      let parsed; try { parsed = JSON.parse(text); } catch { throw new HttpError(502, 'NEAR AI response was not JSON', 'NEAR_AI_ERROR'); }
-      const choice = parsed?.choices?.[0] || {};
-      const content = choice.message?.content;
-      const u = parsed?.usage || {};
-      const usage = { promptTokens: u.prompt_tokens ?? null, completionTokens: u.completion_tokens ?? null, reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? u.reasoning_tokens ?? null };
-      if (choice.finish_reason === 'length') throw new HttpError(502, `NEAR AI stopped at the token limit before finishing the draft (${usage.completionTokens ?? '?'} tokens). No draft was generated.`, 'NEAR_AI_TRUNCATED');
-      let draft; try { draft = JSON.parse(content); } catch { draft = null; }
-      return { draft, rawContent: typeof content === 'string' ? content.slice(0, 8000) : null, responseId: parsed?.id || null, model: parsed?.model || model, finishReason: choice.finish_reason ?? null, usage };
+      }, 'draft');
+      return { draft: out.json, ...out };
+    },
+    async narrate({ facts }) {
+      const out = await complete({
+        model, temperature: 0, max_tokens: maxTokens, chat_template_kwargs: thinkingOff,
+        response_format: { type: 'json_schema', json_schema: { name: 'ferry_case_narrative', strict: true, schema: NARRATIVE_SCHEMA } },
+        messages: [
+          { role: 'system', content: 'You explain one Ferry checkout order using only the JSON facts. Output only the schema. Cite evidenceIds from the facts and no others. If a value is null, call it unknown and do not substitute zero. Do not infer a shortfall from amountIn; minAmountIn is the minimum and amountIn is a buffered suggestion. EXACT_OUTPUT destination amount is conditional on a successful eligible execution, not fiat and not unconditional. A failed refresh means the status was not rechecked; say so. Do not promise a late refund: after the quote deadline funds may be lost. You cannot change price, payout, payment status, sign, execute a refund, or send a message. suggestedReviewStep is a draft for a person to review, not an action you took.' },
+          { role: 'user', content: JSON.stringify(facts) },
+        ],
+      }, 'explanation');
+      return { narrative: out.json, ...out };
     },
   };
 }
@@ -180,5 +225,30 @@ export function createAssistant({ db, ai, tokens, service }) {
     const r = await db.run('UPDATE ai_drafts SET status=?, decided_at=? WHERE id=? AND merchant_id=? AND status=?', ['rejected', now(), draftId, merchantId, 'pending']);
     if (!r.changes) throw new HttpError(404, 'Pending draft not found');
   }
-  return { status, generate, list, approve, reject };
+  // Explains stored evidence. Refresh first when the provider can be asked. Never writes price, payout, or payment status.
+  async function explain(merchantId, orderId) {
+    await service.merchantOrder(merchantId, orderId); // 404 before any provider call if the order is not this merchant's
+    if (!ai.configured) throw new HttpError(503, 'NEAR AI is not configured on this server (NEAR_AI_API_KEY is unset). No explanation was generated.', 'NEAR_AI_NOT_CONFIGURED');
+    const pack = await service.caseEvidence(merchantId, orderId, { refresh: true });
+    const before = { status: pack.order.status, amount: pack.order.amount_out_base, recipient: pack.order.recipient };
+    let out;
+    try { out = await ai.narrate({ facts: pack.facts }); }
+    catch (e) { if (e.code === 'NEAR_AI_AUTH') await setStatus('auth_failed'); throw e; }
+    await setStatus('verified');
+    const validation = validateNarrative(out.narrative, { evidenceIds: pack.evidenceIds, refreshFailed: pack.refreshFailed });
+    const narrativeId = randomId('nar', 9);
+    const factsDigest = sha256(JSON.stringify(pack.facts)).slice(0, 16);
+    await service.recordNarrative(orderId, {
+      narrativeId, status: validation.ok ? 'stored' : 'invalid', model: String(out.model).slice(0, 120), factsDigest,
+      narrative: validation.ok ? validation.value : null, errors: validation.errors.slice(0, 20),
+      responseId: out.responseId, refreshFailed: pack.refreshFailed,
+    });
+    const orderAfter = await service.merchantOrder(merchantId, orderId);
+    return {
+      explanation: { id: narrativeId, status: validation.ok ? 'stored' : 'invalid', model: out.model, factsDigest, narrative: validation.ok ? validation.value : null, errors: validation.errors.slice(0, 20), authority: 'none', label: 'NEAR AI narrative — not a payment decision' },
+      diagnosis: orderAfter.diagnosis,
+      unchanged: before.status === orderAfter.status && before.amount === orderAfter.amount.base && before.recipient === orderAfter.recipient,
+    };
+  }
+  return { status, generate, list, approve, reject, explain };
 }

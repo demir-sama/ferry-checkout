@@ -37,26 +37,30 @@ function renderPay(o, q) {
   const d = q.detail || {};
   const kids = [];
   if (o.status === 'paid') {
-    kids.push(el('h3', {}, 'Payment complete'), el('p', { class: 'muted' }, `The merchant received ${o.amount.formatted} ${o.amount.symbol}.`));
+    kids.push(el('h3', {}, 'Marked paid'), el('p', { class: 'muted' }, `Ferry marked this order paid because 1Click reported SUCCESS and the stored quote matched ${o.amount.formatted} ${o.amount.symbol}. That is a provider settlement report, not a fiat guarantee.`));
   } else if (q.remoteStatus === 'PENDING_DEPOSIT' && Date.parse(q.deadline) > Date.now()) {
     const cd = el('b', { id: 'cd' });
     kids.push(el('h3', {}, 'Send your payment'),
       el('ol', { class: 'steps' },
-        el('li', {}, 'Send exactly ', el('b', { class: 'mono' }, `${q.amountInFormatted} ${q.originSymbol}`), ` on ${q.originChain}. This includes a small slippage buffer; the minimum accepted is ${q.minAmountInFormatted}. Any extra is refunded after the swap.`),
+        el('li', {}, 'Suggested deposit ', el('b', { class: 'mono' }, `${q.amountInFormatted} ${q.originSymbol}`), ` on ${q.originChain}. amountIn includes a slippage buffer. The minimum that can still complete is `, el('b', { class: 'mono' }, `${q.minAmountInFormatted} ${q.originSymbol}`), ' (minAmountIn). The destination amount is delivered only if an eligible swap completes.'),
         el('li', {}, 'to this one-time deposit address:', el('div', { class: 'copy', style: 'margin-top:8px' }, el('div', { class: 'mono' }, q.depositAddress), copyButton(q.depositAddress)),
           el('img', { class: 'qr', src: `/api/checkout/${secret}/qr/${q.id}.svg`, width: 184, height: 184, alt: `QR code of the deposit address ${q.depositAddress}` }),
           el('p', { class: 'hint' }, 'The QR code contains only the address. Always check the amount and network in your wallet before sending.')),
-        q.depositMemo ? el('li', {}, el('b', {}, 'Include this memo, or the deposit will fail:'), el('div', { class: 'copy', style: 'margin-top:8px' }, el('div', { class: 'mono' }, q.depositMemo), copyButton(q.depositMemo))) : null,
-        el('li', {}, 'before the deadline: ', cd, '. After it passes, don\'t send. Request new instructions instead.')),
-      el('p', { class: 'small muted' }, `Refunds go to ${q.refundTo}${q.refundFeeFormatted ? ` (refund fee about ${q.refundFeeFormatted} ${q.originSymbol})` : ''}. Estimated settlement time after confirmation: ${q.timeEstimateSec ?? '?'}s. Allow up to 15 minutes for cross-chain processing.`));
+        q.depositMemo ? el('li', {}, el('b', {}, 'Include this memo. The provider looks up the deposit by address and memo:'), el('div', { class: 'copy', style: 'margin-top:8px' }, el('div', { class: 'mono' }, q.depositMemo), copyButton(q.depositMemo))) : null,
+        el('li', {}, 'before the deadline: ', cd, '. After it passes, don\'t send. The quote deadline is when this deposit address can become inactive, and funds may be lost. Ferry does not promise a late refund.')),
+      el('p', { class: 'small muted' }, `If the provider sends a refund, it uses ${q.refundTo}${q.refundFeeFormatted ? ` (documented refund fee about ${q.refundFeeFormatted} ${q.originSymbol})` : ''}. A seen deposit is not yet settled. Estimated time after confirmation: ${q.timeEstimateSec ?? '?'} seconds.`));
     const tick = () => { const ms = Date.parse(q.deadline) - Date.now(); if (ms <= 0) { cd.textContent = 'expired'; clearInterval(countdown); refresh(); return; } const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000); cd.textContent = `${m}:${String(s).padStart(2, '0')} remaining`; };
     countdown = setInterval(tick, 1000); setTimeout(tick, 0);
   } else {
     kids.push(el('h3', {}, `Latest quote: ${q.remoteStatus.replaceAll('_', ' ').toLowerCase()}`));
-    if (d.depositedAmountFormatted) kids.push(el('p', {}, `Deposited: ${d.depositedAmountFormatted} ${q.originSymbol}`));
-    if (d.refundedAmountFormatted) kids.push(el('p', {}, `Refunded: ${d.refundedAmountFormatted} ${q.originSymbol} to ${q.refundTo}${d.refundReason ? ` (${d.refundReason})` : ''}`));
-    if (q.remoteStatus === 'INCOMPLETE_DEPOSIT') kids.push(el('p', { class: 'notice warn' }, `Less than the minimum (${q.minAmountInFormatted} ${q.originSymbol}) arrived. Send the difference to the same address before the deadline, or the deposit will be refunded.`));
-    if (q.remoteStatus === 'PENDING_DEPOSIT') kids.push(el('p', { class: 'muted' }, 'This quote has expired. Choose a token above to get new deposit instructions.'));
+    const dep = q.evidence?.deposited;
+    const ref = q.evidence?.refunded;
+    kids.push(el('p', {}, dep?.known ? `Deposited: ${dep.formatted} ${q.originSymbol}` : 'Deposited amount: UNKNOWN. A missing amount is not zero, and it is not compared with the buffered amountIn.'));
+    if (ref?.known) kids.push(el('p', {}, `Provider refunded: ${ref.formatted} ${q.originSymbol}${q.evidence?.refundReason ? ` (${q.evidence.refundReason})` : ''}`));
+    else if (q.remoteStatus === 'REFUNDED') kids.push(el('p', {}, 'Provider refunded amount: UNKNOWN.'));
+    if (q.remoteStatus === 'INCOMPLETE_DEPOSIT') kids.push(el('p', { class: 'notice warn' }, dep?.known ? `The provider marked this deposit incomplete. The minimum is ${q.minAmountInFormatted} ${q.originSymbol}. If the deadline has not passed, you can send the difference to the same address and memo. Ferry does not promise a refund.` : `The provider marked this deposit incomplete, and it did not report the size. The shortfall is UNKNOWN. The minimum on the quote is ${q.minAmountInFormatted} ${q.originSymbol}.`));
+    if (q.remoteStatus === 'KNOWN_DEPOSIT_TX') kids.push(el('p', { class: 'notice warn' }, 'A deposit transaction has been seen. That is not settlement.'));
+    if (q.remoteStatus === 'PENDING_DEPOSIT') kids.push(el('p', { class: 'notice warn' }, 'This quote\'s deadline has passed. Don\'t send. Funds sent late may be lost. Ferry does not promise a late refund. Ask for new instructions if you still want to pay.'));
   }
   const txs = [...(d.originChainTxs || []), ...(d.destinationChainTxs || [])];
   if (txs.length) kids.push(el('p', { class: 'small' }, 'Transactions: ', ...txs.map((t, i) => [i ? ' · ' : '', /^https:\/\//.test(t.explorerUrl) ? el('a', { href: t.explorerUrl, rel: 'noopener noreferrer', target: '_blank' }, `${t.hash.slice(0, 10)}…`) : t.hash.slice(0, 10)])));

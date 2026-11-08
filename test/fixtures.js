@@ -16,7 +16,7 @@ export const TOKENS = [
 
 export function fakeOneClick({ tamperQuote, tokens = TOKENS } = {}) {
   const quotes = new Map(); const statuses = new Map(); let n = 0;
-  const calls = []; const state = { tokens: structuredClone(tokens), aiDraft: structuredClone(fakeOneClick.aiDraft), aiFinish: 'stop' };
+  const calls = []; const state = { tokens: structuredClone(tokens), aiDraft: structuredClone(fakeOneClick.aiDraft), aiNarrative: null, aiFinish: 'stop', statusHttp: 0, omitUpdatedAt: false };
   async function fetchImpl(url, init = {}) {
     const u = new URL(url); calls.push({ path: u.pathname, method: init.method, auth: init.headers?.authorization, body: init.body });
     const json = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json' } });
@@ -36,15 +36,20 @@ export function fakeOneClick({ tamperQuote, tokens = TOKENS } = {}) {
       return json(resp);
     }
     if (u.pathname === '/v0/status') {
+      if (state.statusHttp) return json({ message: state.statusMessage || 'sample status outage' }, state.statusHttp);
       const a = u.searchParams.get('depositAddress'); const q = quotes.get(a);
       if (!q) return json({ message: 'Deposit address not found' }, 404);
       const st = statuses.get(a);
-      return json({ correlationId: 'ferry-sample-status', quoteResponse: st.quoteResponse || q, status: st.status, updatedAt: new Date().toISOString(),
-        swapDetails: { intentHashes: [], nearTxHashes: [], originChainTxHashes: [], destinationChainTxHashes: [], ...(st.swapDetails || {}) } });
+      const body = { correlationId: 'ferry-sample-status', quoteResponse: st.quoteResponse || q, status: st.status,
+        swapDetails: { intentHashes: [], nearTxHashes: [], originChainTxHashes: [], destinationChainTxHashes: [], ...(st.swapDetails || {}) } };
+      if (!state.omitUpdatedAt) body.updatedAt = new Date().toISOString();
+      return json(body);
     }
     if (u.pathname === '/v1/chat/completions') {
       if (state.aiHttp) return json({ error: 'sample upstream error' }, state.aiHttp);
-      return json({ id: 'ferry-sample-chat', model: 'ferry-sample-model', choices: [{ finish_reason: state.aiFinish, message: { content: JSON.stringify(state.aiDraft) } }], usage: { prompt_tokens: 700, completion_tokens: 400, completion_tokens_details: { reasoning_tokens: 0 } } });
+      let content = state.aiDraft;
+      try { const req = JSON.parse(init.body || '{}'); if (req.response_format?.json_schema?.name === 'ferry_case_narrative') content = state.aiNarrative ?? state.aiDraft; } catch { /* sample body stays the draft */ }
+      return json({ id: 'ferry-sample-chat', model: 'ferry-sample-model', choices: [{ finish_reason: state.aiFinish, message: { content: JSON.stringify(content) } }], usage: { prompt_tokens: 700, completion_tokens: 400, completion_tokens_details: { reasoning_tokens: 0 } } });
     }
     return json({ message: 'not found' }, 404);
   }

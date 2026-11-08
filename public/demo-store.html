@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sample store — Ferry</title><meta name="description" content="A sample storefront showing the Ferry button">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#0E1A2B">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/site.webmanifest"><meta name="theme-color" content="#14181E">
 <link rel="stylesheet" href="/styles.css"></head><body>
 <header class="top"><div class="wrap">
 <a class="brand" href="/"><img src="/logo.svg" alt="" width="34" height="34">Ferry</a>
@@ -16,6 +16,12 @@
  <p class="muted">Paste product IDs from your dashboard to render real Ferry buttons on this page, just as they would appear on your own site.</p>
  <form id="demo-form" class="row" style="margin:12px 0 24px"><input id="demo-ids" placeholder="prd_… , prd_…" aria-label="Product IDs" style="max-width:520px"><button class="btn secondary" type="submit">Render buttons</button></form>
  <div id="demo-grid" class="product-grid"></div>
+ <section class="sim-block" aria-label="Simulated reconciliation cases">
+  <p class="badge-sample">SIMULATED</p>
+  <h2>A labelled reconciliation walkthrough</h2>
+  <p class="muted" id="sim-notice">Loading simulated cases…</p>
+  <div id="sim-cases" class="grid"></div>
+ </section>
 </section></div></main>
 <footer class="foot"><div class="wrap"><span>Ferry Checkout · MIT licensed · Settlement by <a href="https://docs.near-intents.org">NEAR Intents</a> · Drafting by <a href="https://docs.near.ai">NEAR AI Cloud</a></span><span><a href="/docs">Docs</a> · <a href="/about">About</a></span></div></footer>
 <script type="module" src="/common.js"></script><script type="module" src="/demo-store.js"></script></body></html>

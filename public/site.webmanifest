@@ -1,1 +1,1 @@
-{ "name": "Ferry Checkout", "short_name": "Ferry", "icons": [{ "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml" }], "theme_color": "#0E1A2B", "background_color": "#F6F3EC", "display": "standalone" }
+{ "name": "Ferry Checkout", "short_name": "Ferry", "icons": [{ "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml" }], "theme_color": "#14181E", "background_color": "#14181E", "display": "standalone" }
